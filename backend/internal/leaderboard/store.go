@@ -40,7 +40,7 @@ func (s *PGStore) ListLeaderboard(ctx context.Context, mode, seasonID string, li
 			return nil, err
 		}
 	}
-	rows, err := s.q().ListLeaderboard(ctx, db.ListLeaderboardParams{Mode: db.GdMatchMode(mode), SeasonID: seasonID, Limit: int32(limit), Offset: int32(offset)})
+	rows, err := s.q().ListLeaderboard(ctx, db.ListLeaderboardParams{Mode: db.GdMatchMode(mode), SeasonID: seasonID, RowOffset: int32(offset), RowLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
@@ -76,4 +76,18 @@ func (s *PGStore) GetLeaderboardOverview(ctx context.Context, userID, mode, seas
 		return Overview{}, err
 	}
 	return Overview{Mode: mode, SeasonID: seasonID, SelfRank: int(totals.SelfRank), TotalPlayers: int(totals.TotalPlayers), Entries: entries}, nil
+}
+
+// Refresh moves a season's players to their places on its leaderboard, the active season when seasonID
+// is empty, and says how many moved.
+func (s *PGStore) Refresh(ctx context.Context, seasonID string) (int, error) {
+	if seasonID == "" {
+		var err error
+		seasonID, err = s.q().GetActiveSeasonID(ctx)
+		if err != nil {
+			return 0, err
+		}
+	}
+	moved, err := s.q().RefreshLeaderboard(ctx, db.RefreshLeaderboardParams{Mode: modeDuel, SeasonID: seasonID})
+	return int(moved), err
 }

@@ -9,6 +9,7 @@ import (
 	"geoduels/internal/accounts"
 	"geoduels/internal/curation"
 	"geoduels/internal/jobs"
+	"geoduels/internal/leaderboard"
 	"geoduels/internal/moderation"
 	"geoduels/internal/seasons"
 	"geoduels/internal/storage"
@@ -90,7 +91,8 @@ func (w *storageCleanupWorker) Work(ctx context.Context, _ *river.Job[jobs.Stora
 // seasonResetWorker applies a due ranked season reset.
 type seasonResetWorker struct {
 	river.WorkerDefaults[jobs.SeasonResetArgs]
-	seasons seasons.Store
+	seasons     seasons.Store
+	leaderboard *leaderboard.Service
 }
 
 func (w *seasonResetWorker) Work(ctx context.Context, _ *river.Job[jobs.SeasonResetArgs]) error {
@@ -101,14 +103,32 @@ func (w *seasonResetWorker) Work(ctx context.Context, _ *river.Job[jobs.SeasonRe
 	if err != nil {
 		return err
 	}
-	if reset {
-		observability.Log("info", "ranked season reset completed", map[string]any{
-			"previousSeasonId": result.PreviousSeasonID,
-			"activeSeasonId":   result.ActiveSeasonID,
-			"playersSeeded":    result.PlayersSeeded,
-		})
+	if !reset {
+		return nil
+	}
+	observability.Log("info", "ranked season reset completed", map[string]any{
+		"previousSeasonId": result.PreviousSeasonID,
+		"activeSeasonId":   result.ActiveSeasonID,
+		"playersSeeded":    result.PlayersSeeded,
+	})
+	// The finished season's leaderboard is final, and the new one has its players from the start.
+	for _, season := range []string{result.PreviousSeasonID, result.ActiveSeasonID} {
+		if _, err := w.leaderboard.Refresh(ctx, season); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// leaderboardRefreshWorker keeps the active season's leaderboard places current.
+type leaderboardRefreshWorker struct {
+	river.WorkerDefaults[jobs.LeaderboardRefreshArgs]
+	leaderboard *leaderboard.Service
+}
+
+func (w *leaderboardRefreshWorker) Work(ctx context.Context, _ *river.Job[jobs.LeaderboardRefreshArgs]) error {
+	_, err := w.leaderboard.Refresh(ctx, "")
+	return err
 }
 
 // curationSweepWorker closes any due Map-of-the-Week cycle.

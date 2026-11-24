@@ -149,17 +149,21 @@ func (a *api) startMatchIn(ctx context.Context, tx pgx.Tx, req startRequest) (st
 			IsGuest: profile.IsGuest, IsAdmin: profile.IsAdmin, SelectedBadge: matchBadge(profile.SelectedBadge),
 		}})
 	}
+	var planned maps.MatchPlan
 	params.Plan = func(ctx context.Context, tx pgx.Tx) (matches.Plan, error) {
 		plan, err := a.mapsStore.PlanMatchTx(ctx, tx, maps.MatchPlanRequest{
-			MatchID: matchID, Spec: spec, Config: req.Config, MapAccessUserID: req.MapAccessUserID, Players: userIDs,
+			MatchID: matchID, Spec: spec, Config: req.Config, MapAccessUserID: req.MapAccessUserID,
 		})
+		planned = plan
 		return matches.Plan{Config: plan.Config, MapID: plan.MapID}, err
 	}
 	params.After = func(ctx context.Context, tx pgx.Tx) error {
 		if req.PartyID != "" {
-			return parties.MarkMatchStartedTx(ctx, tx, req.PartyID, matchID)
+			if err := parties.MarkMatchStartedTx(ctx, tx, req.PartyID, matchID); err != nil {
+				return err
+			}
 		}
-		return nil
+		return a.mapsStore.RecordMatchPlayTx(ctx, tx, planned.MapID, userIDs)
 	}
 	var err error
 	if tx == nil {

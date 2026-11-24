@@ -175,27 +175,19 @@ func finalizeDuelResultTx(ctx context.Context, tx pgx.Tx, teller jobs.Teller, q 
 			UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			Mode:      db.GdMatchMode(modeDuel),
 			SeasonID:  seasonID,
-			P1UserID:  p1.userID, P1Mmr: int32(p1.update.MMR), P1Rd: p1.update.RD, P1Apply: !p1.guest,
-			P2UserID: p2.userID, P2Mmr: int32(p2.update.MMR), P2Rd: p2.update.RD, P2Apply: !p2.guest,
+			P1UserID:  p1.userID, P1Mmr: int32(p1.update.MMR), P1Rd: p1.update.RD, P1Result: result.seasonResult(p1), P1Apply: !p1.guest,
+			P2UserID: p2.userID, P2Mmr: int32(p2.update.MMR), P2Rd: p2.update.RD, P2Result: result.seasonResult(p2), P2Apply: !p2.guest,
 		}); err != nil {
 			return err
 		}
 	}
 	if err := q.AddDuelUserStats(ctx, db.AddDuelUserStatsParams{
-		P1UserID: p1.userID, P1Won: p1.won,
-		P2UserID: p2.userID, P2Won: p2.won,
+		P1UserID: p1.userID, P1Won: p1.won, P1Flawless: p1.flawless(),
+		P2UserID: p2.userID, P2Won: p2.won, P2Flawless: p2.flawless(),
 	}); err != nil {
 		return err
 	}
 	if ratedMatch {
-		if err := q.AddDuelRankedStats(ctx, db.AddDuelRankedStatsParams{
-			Mode:     db.GdMatchMode(modeDuel),
-			SeasonID: seasonID,
-			P1UserID: p1.userID, P1Won: p1.won, P1Apply: !p1.guest,
-			P2UserID: p2.userID, P2Won: p2.won, P2Apply: !p2.guest,
-		}); err != nil {
-			return err
-		}
 		if err := q.SetMatchPlayerRatingDeltas(ctx, db.SetMatchPlayerRatingDeltasParams{
 			MatchID:  chatUUID(snap.MatchID),
 			P1UserID: p1.userID, P1RatingBefore: int32(p1.rating.MMR), P1RatingAfter: int32(p1.update.MMR), P1Apply: !p1.guest,
@@ -344,10 +336,7 @@ func ensureMatchUsersTx(ctx context.Context, tx pgx.Tx, q *db.Queries, snap game
 	if err := q.EnsureMatchRanks(ctx, db.EnsureMatchRanksParams{Mode: db.GdMatchMode(modeDuel), Mmr: int32(initialMMR), SeasonID: seasonID, PlayerIdsJson: encodedSeeds}); err != nil {
 		return err
 	}
-	if err := q.EnsureMatchUserStats(ctx, encodedSeeds); err != nil {
-		return err
-	}
-	return q.EnsureMatchRankedStats(ctx, db.EnsureMatchRankedStatsParams{Mode: db.GdMatchMode(modeDuel), SeasonID: seasonID, PlayerIdsJson: encodedSeeds})
+	return q.EnsureMatchUserStats(ctx, encodedSeeds)
 }
 
 func recordMatchHistory(
@@ -500,6 +489,9 @@ func recordMatchHistory(
 			MatchID:    matchUUID,
 			EventsJson: encodedGuesses,
 		}); err != nil {
+			return err
+		}
+		if err := q.AddPerfectGuesses(ctx, encodedGuesses); err != nil {
 			return err
 		}
 	}

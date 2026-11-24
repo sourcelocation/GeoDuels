@@ -139,9 +139,6 @@ func advanceRankedSeasonTx(ctx context.Context, q *db.Queries, tx pgx.Tx, teller
 	if err != nil {
 		return 0, err
 	}
-	if err := q.SeedRankedSeasonStats(ctx, db.SeedRankedSeasonStatsParams{Mode: modeDuel, SeasonID: nextSeasonID}); err != nil {
-		return 0, err
-	}
 	return int(seeded), nil
 }
 

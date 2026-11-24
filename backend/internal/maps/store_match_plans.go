@@ -24,7 +24,6 @@ type MatchPlanRequest struct {
 	Config  gameplay.MatchConfig
 	// MapAccessUserID is whose private maps the match may play.
 	MapAccessUserID string
-	Players         []string
 }
 
 // MatchPlan is the map a match plays; its rounds are in match_round_plans.
@@ -91,10 +90,14 @@ func (s *PGStore) PlanMatchTx(ctx context.Context, tx pgx.Tx, req MatchPlanReque
 	cfg.MapID = mapID
 	cfg.MapName = selectedMap.DisplayName
 	cfg.MapKey = ""
-	if err := incrementMapPlayStats(ctx, tx, mapID, req.Players); err != nil {
-		return MatchPlan{}, err
-	}
 	return MatchPlan{Config: cfg, MapID: mapID}, nil
+}
+
+// RecordMatchPlayTx counts a starting match toward its map's plays in the caller's transaction. A
+// map's counters are rows every match on it updates, so a start touches them last, once its seats
+// are taken: holding them any earlier makes concurrent starts deadlock.
+func (s *PGStore) RecordMatchPlayTx(ctx context.Context, tx pgx.Tx, mapID string, players []string) error {
+	return incrementMapPlayStats(ctx, tx, mapID, players)
 }
 
 // MatchRounds returns a match's planned round locations, in order.

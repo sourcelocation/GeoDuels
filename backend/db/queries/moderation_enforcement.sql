@@ -54,10 +54,9 @@ WHERE id = $1;
 -- name: GetPlayerRiskContext :one
 SELECT
     COALESCE(r.mmr, sqlc.arg(default_rating))::int AS rating,
-    COALESCE(rs.games_played, 0)::int AS ranked_games
+    COALESCE(r.games_played, 0)::int AS ranked_games
 FROM users u
 LEFT JOIN ranks r ON r.user_id = u.id AND r.mode = sqlc.arg(mode) AND r.season_id = sqlc.arg(season_id)
-LEFT JOIN ranked_stats rs ON rs.user_id = u.id AND rs.mode = sqlc.arg(mode) AND rs.season_id = sqlc.arg(season_id)
 WHERE u.id = sqlc.arg(user_id);
 
 -- name: GetUserRegistrationIP :one

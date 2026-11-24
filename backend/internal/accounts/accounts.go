@@ -238,14 +238,6 @@ func (s *PGStore) EnsureAccountStats(ctx context.Context, userID string) error {
 	return s.q().EnsureAccountStats(ctx, u)
 }
 
-func (s *PGStore) EnsureAccountRankedStats(ctx context.Context, userID, mode, seasonID string) error {
-	u, err := profileUUID(userID)
-	if err != nil {
-		return err
-	}
-	return s.q().EnsureAccountRankedStats(ctx, db.EnsureAccountRankedStatsParams{UserID: u, Mode: db.GdMatchMode(mode), SeasonID: seasonID})
-}
-
 func (s *PGStore) UpsertUser(ctx context.Context, userID, displayName string) error {
 	id, err := profileUUID(userID)
 	if err != nil {
@@ -268,14 +260,6 @@ func (s *PGStore) EnsureUserStats(ctx context.Context, userID string) error {
 		return err
 	}
 	return s.q().EnsureUserStats(ctx, u)
-}
-
-func (s *PGStore) EnsureRankedStats(ctx context.Context, userID, mode, seasonID string) error {
-	u, err := profileUUID(userID)
-	if err != nil {
-		return err
-	}
-	return s.q().EnsureRankedStats(ctx, db.EnsureRankedStatsParams{UserID: u, Mode: db.GdMatchMode(mode), SeasonID: seasonID})
 }
 
 func (s *PGStore) SetNickname(ctx context.Context, sub, displayName string) error {

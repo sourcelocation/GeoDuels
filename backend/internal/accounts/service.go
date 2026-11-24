@@ -168,9 +168,6 @@ func (s *Service) UpsertProviderIdentity(provider, providerUserID, email, provid
 		if err := store.EnsureAccountStats(ctx, userID); err != nil {
 			return err
 		}
-		if err := store.EnsureAccountRankedStats(ctx, userID, modeDuel, seasonID); err != nil {
-			return err
-		}
 		if provider == IdentityProviderDiscord {
 			if previousLinkedProviderUserID != "" && previousLinkedProviderUserID != providerUserID {
 				if err := store.EnqueueDiscordSync(ctx, DiscordSyncActionCleanupRoles, previousLinkedProviderUserID); err != nil {
@@ -276,9 +273,6 @@ func (s *Service) LinkProviderIdentity(provider, providerUserID, email, provider
 			return err
 		}
 		if err := store.EnsureAccountRank(ctx, linkUserID, modeDuel, seasonID, initialMMR); err != nil {
-			return err
-		}
-		if err := store.EnsureAccountRankedStats(ctx, linkUserID, modeDuel, seasonID); err != nil {
 			return err
 		}
 		if provider == IdentityProviderDiscord {
@@ -395,9 +389,6 @@ func (s *Service) CreateGuestIdentity() (Identity, error) {
 			return err
 		}
 		if err := store.EnsureUserStats(ctx, userID); err != nil {
-			return err
-		}
-		if err := store.EnsureRankedStats(ctx, userID, modeDuel, seasonID); err != nil {
 			return err
 		}
 		return nil

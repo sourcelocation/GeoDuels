@@ -25,6 +25,7 @@ const (
 	KindStorageCleanup   = "storage_cleanup"
 	KindSeasonReset      = "season_reset"
 	KindCurationSweep    = "curation_sweep"
+	KindLeaderboard      = "leaderboard_refresh"
 	KindInboxChanged     = "inbox_changed"
 	KindPartyChanged     = "party_changed"
 	KindPresenceChanged  = "presence_changed"
@@ -89,6 +90,11 @@ func (SeasonResetArgs) Kind() string { return KindSeasonReset }
 type CurationSweepArgs struct{}
 
 func (CurationSweepArgs) Kind() string { return KindCurationSweep }
+
+// LeaderboardRefreshArgs moves the active season's players to their places on its leaderboard.
+type LeaderboardRefreshArgs struct{}
+
+func (LeaderboardRefreshArgs) Kind() string { return KindLeaderboard }
 
 // InboxChangedArgs tells a person about a new inbox message.
 type InboxChangedArgs struct {
@@ -229,4 +235,5 @@ type PeriodicConfig struct {
 	StorageCleanupInterval time.Duration
 	SeasonResetInterval    time.Duration
 	CurationInterval       time.Duration
+	LeaderboardInterval    time.Duration
 }

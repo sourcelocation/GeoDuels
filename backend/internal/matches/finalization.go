@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"geoduels/pkg/duel"
 	"geoduels/pkg/gameplay"
 )
 
@@ -26,6 +27,11 @@ type duelParticipantResult struct {
 	guest      bool
 	rating     RatingState
 	update     RatingUpdate
+}
+
+// flawless reports a win that kept all of the duel's starting HP.
+func (p *duelParticipantResult) flawless() bool {
+	return p.won && p.player.HP >= duel.StartingHP
 }
 
 type duelResult struct {
@@ -100,6 +106,18 @@ func newDuelResult(snap *gameplay.MatchSnapshot) (duelResult, error) {
 		result.outcome = duelOutcomeDraw
 	}
 	return result, nil
+}
+
+// seasonResult is how a rated duel ended for one of its players, as their season counts it.
+func (r duelResult) seasonResult(p *duelParticipantResult) string {
+	switch {
+	case r.outcome == duelOutcomeDraw:
+		return "draw"
+	case p.won:
+		return "win"
+	default:
+		return "loss"
+	}
 }
 
 func (r duelResult) ratingWinner() string {

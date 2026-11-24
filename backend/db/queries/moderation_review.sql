@@ -21,7 +21,7 @@ select
     coalesce(r.mmr, sqlc.arg(default_mmr)::int) as mmr,
     coalesce(us.games_played, 0) as games_played,
     coalesce(us.wins, 0) as wins,
-    coalesce(rs.games_played, 0) as ranked_games_played,
+    coalesce(r.games_played, 0) as ranked_games_played,
     gd_is_guest(u.id) as is_guest,
     gd_is_admin(u.id) as is_admin,
     gd_is_judge(u.id) as is_moderator,
@@ -53,7 +53,6 @@ left join lateral (
 ) latest_session on true
 left join ranks r on r.user_id = u.id and r.mode = sqlc.arg(mode) and r.season_id = sqlc.arg(season_id)
 left join user_stats us on us.user_id = u.id
-left join ranked_stats rs on rs.user_id = u.id and rs.mode = sqlc.arg(mode) and rs.season_id = sqlc.arg(season_id)
 where (sqlc.arg(search) = '%%'
        or lower(u.id::text) like sqlc.arg(search)
        or lower(coalesce(u.email, '')) like sqlc.arg(search)

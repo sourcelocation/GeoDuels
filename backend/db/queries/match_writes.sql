@@ -1,29 +1,24 @@
--- name: AddDuelRankedStats :exec
-UPDATE ranked_stats stats
-SET games_played = stats.games_played + 1,
-    wins = stats.wins + result.won::integer,
-    updated_at = now()
-FROM (
-    VALUES
-        (sqlc.arg(p1_user_id)::uuid, sqlc.arg(p1_won)::boolean, sqlc.arg(p1_apply)::boolean),
-        (sqlc.arg(p2_user_id)::uuid, sqlc.arg(p2_won)::boolean, sqlc.arg(p2_apply)::boolean)
-) AS result(user_id, won, apply)
-WHERE stats.user_id = result.user_id
-  AND stats.mode = sqlc.arg(mode)
-  AND stats.season_id = sqlc.arg(season_id)
-  AND result.apply;
-
 -- name: AddDuelUserStats :exec
 UPDATE user_stats stats
 SET games_played = stats.games_played + 1,
     wins = stats.wins + result.won::integer,
+    flawless_wins = stats.flawless_wins + result.flawless::integer,
     updated_at = now()
 FROM (
     VALUES
-        (sqlc.arg(p1_user_id)::uuid, sqlc.arg(p1_won)::boolean),
-        (sqlc.arg(p2_user_id)::uuid, sqlc.arg(p2_won)::boolean)
-) AS result(user_id, won)
+        (sqlc.arg(p1_user_id)::uuid, sqlc.arg(p1_won)::boolean, sqlc.arg(p1_flawless)::boolean),
+        (sqlc.arg(p2_user_id)::uuid, sqlc.arg(p2_won)::boolean, sqlc.arg(p2_flawless)::boolean)
+) AS result(user_id, won, flawless)
 WHERE stats.user_id = result.user_id;
+
+-- name: AddPerfectGuesses :exec
+-- Counts the 5000-point guesses among a match's ranked guess events.
+INSERT INTO user_stats AS stats (user_id, perfect_guesses)
+SELECT input.user_id, count(*)::integer
+FROM jsonb_to_recordset(convert_from(sqlc.arg(events_json), 'UTF8')::jsonb) AS input(user_id uuid, score smallint)
+WHERE input.score = 5000
+GROUP BY 1
+ON CONFLICT (user_id) DO UPDATE SET perfect_guesses = stats.perfect_guesses + excluded.perfect_guesses, updated_at = now();
 
 -- name: CompleteMatchSession :exec
 -- Ends a played match and frees its players' seats.
@@ -35,12 +30,6 @@ WITH ended AS (
 )
 UPDATE match_participants mp SET active = false
 FROM ended WHERE mp.match_id = ended.match_id AND mp.active;
-
--- name: EnsureMatchRankedStats :exec
-INSERT INTO ranked_stats (user_id, mode, season_id, games_played, wins)
-SELECT input.user_id, sqlc.arg(mode), sqlc.arg(season_id), 0, 0
-FROM jsonb_to_recordset(convert_from(sqlc.arg(player_ids_json), 'UTF8')::jsonb) AS input(user_id uuid)
-ON CONFLICT (user_id, mode, season_id) DO NOTHING;
 
 -- name: EnsureMatchRanks :exec
 INSERT INTO ranks (user_id, mode, mmr, season_id)
@@ -112,13 +101,19 @@ WHERE players.match_id = sqlc.arg(match_id)::uuid
   AND result.apply;
 
 -- name: UpdateDuelRanks :exec
+-- A rated duel's result in its players' season: rating, games, wins and streaks. A result is
+-- 'win', 'loss' or 'draw'; a draw neither extends nor breaks a streak.
 UPDATE ranks r
-SET mmr = next.mmr, rd = next.rd, updated_at = sqlc.arg(updated_at)
+SET mmr = next.mmr, rd = next.rd, updated_at = sqlc.arg(updated_at),
+    games_played = r.games_played + 1,
+    wins = r.wins + (next.result = 'win')::integer,
+    current_streak = CASE next.result WHEN 'win' THEN r.current_streak + 1 WHEN 'loss' THEN 0 ELSE r.current_streak END,
+    best_streak = greatest(r.best_streak, CASE next.result WHEN 'win' THEN r.current_streak + 1 ELSE 0 END)
 FROM (
     VALUES
-        (sqlc.arg(p1_user_id)::uuid, sqlc.arg(p1_mmr)::integer, sqlc.arg(p1_rd)::double precision, sqlc.arg(p1_apply)::boolean),
-        (sqlc.arg(p2_user_id)::uuid, sqlc.arg(p2_mmr)::integer, sqlc.arg(p2_rd)::double precision, sqlc.arg(p2_apply)::boolean)
-) AS next(user_id, mmr, rd, apply)
+        (sqlc.arg(p1_user_id)::uuid, sqlc.arg(p1_mmr)::integer, sqlc.arg(p1_rd)::double precision, sqlc.arg(p1_result)::text, sqlc.arg(p1_apply)::boolean),
+        (sqlc.arg(p2_user_id)::uuid, sqlc.arg(p2_mmr)::integer, sqlc.arg(p2_rd)::double precision, sqlc.arg(p2_result)::text, sqlc.arg(p2_apply)::boolean)
+) AS next(user_id, mmr, rd, result, apply)
 WHERE r.user_id = next.user_id
   AND r.mode = sqlc.arg(mode)
   AND r.season_id = sqlc.arg(season_id)

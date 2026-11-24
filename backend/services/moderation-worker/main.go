@@ -18,6 +18,7 @@ import (
 	"geoduels/internal/content"
 	"geoduels/internal/curation"
 	"geoduels/internal/jobs"
+	"geoduels/internal/leaderboard"
 	"geoduels/internal/moderation"
 	"geoduels/internal/seasons"
 	"geoduels/internal/storage"
@@ -95,6 +96,7 @@ func newWorker() (*worker, error) {
 	accountsService := accounts.NewService(accountsStore)
 	storageStore := storage.NewPGStore(pool, producer)
 	seasonsStore := seasons.NewPGStore(pool, producer)
+	leaderboardService := leaderboard.NewService(leaderboard.NewPGStore(pool))
 
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &matchAnalyzeWorker{moderation: moderationService})
@@ -108,14 +110,16 @@ func newWorker() (*worker, error) {
 		storage: storageStore,
 		batch:   getenvInt("STORAGE_CLEANUP_BATCH_SIZE", 1000),
 	})
-	river.AddWorker(workers, &seasonResetWorker{seasons: seasonsStore})
+	river.AddWorker(workers, &seasonResetWorker{seasons: seasonsStore, leaderboard: leaderboardService})
 	river.AddWorker(workers, &curationSweepWorker{curation: curationService})
+	river.AddWorker(workers, &leaderboardRefreshWorker{leaderboard: leaderboardService})
 
 	periodic := jobs.PeriodicJobs(jobs.PeriodicConfig{
 		GuestCleanupInterval:   getenvDuration("GUEST_ACCOUNT_CLEANUP_INTERVAL", time.Hour),
 		StorageCleanupInterval: getenvDuration("STORAGE_CLEANUP_INTERVAL", time.Hour),
 		SeasonResetInterval:    time.Minute,
 		CurationInterval:       time.Minute,
+		LeaderboardInterval:    time.Minute,
 	})
 	jobsClient, err := jobs.NewClient(pool, river.QueueDefault, workers, periodic)
 	if err != nil {

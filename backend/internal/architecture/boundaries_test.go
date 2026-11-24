@@ -42,12 +42,11 @@ var infrastructure = []string{"envcfg", "httpx", "jobs", "rating", "storekit"}
 // queryExceptions are calls into another module's queries that predate this
 // check. Remove entries as they are fixed; do not add new ones.
 var queryExceptions = map[string][]string{
-	"accounts": {"BanUserOAuthIdentities", "EnsureRankedStats", "EnsureUserRank", "EnsureUserStats", "GetStaffRoles", "UpsertUser"},
+	"accounts": {"BanUserOAuthIdentities", "EnsureUserRank", "EnsureUserStats", "GetStaffRoles", "UpsertUser"},
 	"jobs":     {"ListDiscordIdentities"},
-	"maps":     {"GetProfile", "ListMapCountryStats"},
-	"profiles": {"GetLeaderboardTotals"},
+	"maps":     {"ListMapCountryStats"},
 	"seasons": {"EnsureRankedSeasonSettings", "GetRankedSeasonSettings", "GetRankedSeasonSettingsForUpdate", "ListRankedSeasonFinishers",
-		"SeedRankedSeasonRanks", "SeedRankedSeasonStats", "WriteRankedSeasonSettings"},
+		"SeedRankedSeasonRanks", "WriteRankedSeasonSettings"},
 	"social": {"GetSocialAccount", "GetSocialSettings", "UpdateSocialSettings"},
 }
 
