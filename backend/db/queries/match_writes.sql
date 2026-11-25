@@ -49,13 +49,6 @@ SELECT input.user_id, NULL, input.display_name, NULL
 FROM jsonb_to_recordset(convert_from(sqlc.arg(players_json), 'UTF8')::jsonb) AS input(user_id uuid, display_name text)
 ON CONFLICT (id) DO NOTHING;
 
--- name: GetMatchRoundPlanMapID :one
-SELECT map_id AS map_id
-FROM match_round_plans
-WHERE match_id = $1
-ORDER BY round_index
-LIMIT 1;
-
 -- name: LockDuelRatings :many
 SELECT u.id, gd_is_guest(u.id) AS is_guest, r.mmr, r.rd, r.updated_at
 FROM unnest(ARRAY[sqlc.arg(user1_id)::uuid, sqlc.arg(user2_id)::uuid]) WITH ORDINALITY requested(user_id, position)

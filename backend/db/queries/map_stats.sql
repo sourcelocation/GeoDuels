@@ -1,38 +1,49 @@
--- name: DailyUserCommented :one
-select commented from map_daily_users where map_id=sqlc.arg(map_id)::uuid and day=current_date and user_id=sqlc.arg(user_id)::uuid;
-
--- name: DailyUserFavorited :one
-select favorited from map_daily_users where map_id=sqlc.arg(map_id)::uuid and day=current_date and user_id=sqlc.arg(user_id)::uuid;
-
--- name: DailyUserPlayed :one
-select played from map_daily_users where map_id=sqlc.arg(map_id)::uuid and day=current_date and user_id=sqlc.arg(user_id)::uuid;
-
--- name: IncrementDailyCommented :exec
-insert into map_stats_daily(map_id,day,comments,unique_commenters) values(sqlc.arg(map_id)::uuid,current_date,1,sqlc.arg(increment)) on conflict(map_id,day) do update set comments=map_stats_daily.comments+1,unique_commenters=map_stats_daily.unique_commenters+sqlc.arg(increment);
-
--- name: IncrementDailyFavorited :exec
-insert into map_stats_daily(map_id,day,favorites,unique_favoriters) values(sqlc.arg(map_id)::uuid,current_date,1,sqlc.arg(increment)) on conflict(map_id,day) do update set favorites=map_stats_daily.favorites+1,unique_favoriters=map_stats_daily.unique_favoriters+sqlc.arg(increment);
-
--- name: IncrementDailyPlayed :exec
-insert into map_stats_daily(map_id,day,plays,unique_players) values(sqlc.arg(map_id)::uuid,current_date,1,sqlc.arg(increment)) on conflict(map_id,day) do update set plays=map_stats_daily.plays+1,unique_players=map_stats_daily.unique_players+sqlc.arg(increment);
-
 -- name: IncrementMapComment :exec
 update maps set comment_count=comment_count+1, updated_at=now() where id=sqlc.arg(map_id)::uuid;
 
 -- name: IncrementMapFavorite :exec
 update maps set favorite_count=favorite_count+1, updated_at=now() where id=sqlc.arg(map_id)::uuid;
 
--- name: TrendingInputs :one
-select coalesce(sum(unique_players)*3+sum(unique_favoriters)*8+sum(unique_commenters)*2,0)::float8 AS weighted_score, coalesce(sum(unique_players)+sum(unique_favoriters)+sum(unique_commenters),0)::float8 AS activity_total, (select published_at from maps where id=sqlc.arg(map_id)::uuid) AS published_at from map_stats_daily where map_id=sqlc.arg(map_id)::uuid and day >= current_date - sqlc.arg(window_days)::int;
+-- name: RefreshMapTrending :execrows
+-- Sets every map's trending score from its last week: 3 for each day a player played it, 8 for each
+-- favorite and 2 for each day a player commented on it. A map published within the week with at least
+-- three of those scores up to 20 times as much, fading to once by the week's end.
+WITH activity AS (
+    SELECT h.map_id, 3 AS weight, count(DISTINCT (mp.user_id, h.ended_at::date)) AS events
+    FROM match_history h JOIN match_players mp ON mp.match_id = h.match_id
+    WHERE h.ended_at > now() - interval '7 days' AND h.map_id IS NOT NULL
+    GROUP BY h.map_id
+    UNION ALL
+    SELECT f.map_id, 8, count(*) FROM map_favorites f
+    WHERE f.created_at > now() - interval '7 days'
+    GROUP BY f.map_id
+    UNION ALL
+    SELECT c.map_id, 2, count(DISTINCT (c.user_id, c.created_at::date)) FROM map_comments c
+    WHERE c.created_at > now() - interval '7 days' AND c.deleted_at IS NULL
+    GROUP BY c.map_id
+), totals AS (
+    SELECT map_id, sum(weight * events)::float8 AS weighted, sum(events)::bigint AS events
+    FROM activity GROUP BY map_id
+), scores AS (
+    SELECT m.id, (coalesce(t.weighted, 0) * CASE
+        WHEN coalesce(t.events, 0) >= 3 AND m.published_at IS NOT NULL
+        THEN 1 + 19 * (1 - least(greatest(extract(epoch FROM now() - m.published_at)::float8 / 604800, 0), 1))
+        ELSE 1 END)::float8 AS score
+    FROM maps m LEFT JOIN totals t ON t.map_id = m.id
+)
+UPDATE maps m SET trending_score = s.score
+FROM scores s
+WHERE m.id = s.id AND m.trending_score IS DISTINCT FROM s.score;
 
--- name: UpdateTrendingScore :exec
-update maps set trending_score=sqlc.arg(trending_score) where id=sqlc.arg(map_id)::uuid;
-
--- name: UpsertDailyCommented :exec
-insert into map_daily_users(map_id,day,user_id,commented) values(sqlc.arg(map_id)::uuid,current_date,sqlc.arg(user_id)::uuid,true) on conflict(map_id,day,user_id) do update set commented=true;
-
--- name: UpsertDailyFavorited :exec
-insert into map_daily_users(map_id,day,user_id,favorited) values(sqlc.arg(map_id)::uuid,current_date,sqlc.arg(user_id)::uuid,true) on conflict(map_id,day,user_id) do update set favorited=true;
-
--- name: UpsertDailyPlayed :exec
-insert into map_daily_users(map_id,day,user_id,played) values(sqlc.arg(map_id)::uuid,current_date,sqlc.arg(user_id)::uuid,true) on conflict(map_id,day,user_id) do update set played=true;
+-- name: RefreshMapPlays :execrows
+-- Recounts, from match history, the plays of every map played in the last week.
+UPDATE maps m SET play_count = c.plays
+FROM (
+    SELECT h.map_id, count(*)::int AS plays FROM match_history h
+    WHERE h.map_id IN (
+        SELECT DISTINCT recent.map_id FROM match_history recent
+        WHERE recent.ended_at > now() - interval '7 days' AND recent.map_id IS NOT NULL
+    )
+    GROUP BY h.map_id
+) c
+WHERE m.id = c.map_id AND m.play_count IS DISTINCT FROM c.plays;

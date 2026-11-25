@@ -7,7 +7,7 @@
 # GeoDuels' ports start at 24000, so it runs beside other projects' stacks, on loopback only:
 #   24000 the front door (`front`, or Next's dev server in development)   24001 the API
 #   24002 the gateway (development only)   24003 Postgres   24004 NATS
-#   24005-24007 the gameplay node and workers (development only)
+#   24005-24007 the gameplay node and workers (development only)   24008 the matchmaker (development only)
 # Inside the network every service keeps its usual port.
 name: geoduels
 
@@ -76,7 +76,21 @@ services:
       db-migrate: { condition: service_completed_successfully }
       nats: { condition: service_started }
 
-  # Carries events from the API to whichever gateway holds each person's connection. It keeps nothing:
+  # Creates every match: the queue, and starts alone or with a party. Any number can run.
+  matchmaker:
+    <<: *backend
+    image: ${REGISTRY:-ghcr.io/sourcelocation}/geoduels-matchmaker:${GEODUELS_VERSION:-dev}
+    build: { context: backend, dockerfile: services/matchmaker/Dockerfile }
+    stop_grace_period: 15s
+    environment:
+      POSTGRES_URL: *database
+      MATCHMAKER_ADDR: ":8097"
+      NATS_URL: nats://nats:4222
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+      nats: { condition: service_started }
+
+  # Carries events from the API and the matchmaker to whichever gateway holds each person's connection. It keeps nothing:
   # every connection starts from a full session.
   nats:
     <<: *service
@@ -110,15 +124,15 @@ services:
       API_URL: http://api:8080
     depends_on: [api]
 
-  # The front door: websockets to the gateway, /api to the API, the rest to the web app, as the
-  # ingress routes production.
+  # The front door: websockets to the gateway, /matchmaking to the matchmaker, /api to the API, the
+  # rest to the web app, as the ingress routes production.
   front:
     <<: *app
     image: caddy:2.11.7-alpine
     env_file: []
     configs: [{ source: front, target: /etc/caddy/Caddyfile }]
     ports: ["127.0.0.1:24000:8080"]
-    depends_on: [api, gateway, web]
+    depends_on: [api, gateway, matchmaker, web]
 
   # COMPOSE_PROFILES=app,workers: moderation (with RISK_ENGINE_*) and the Discord bot (DISCORD_BOT_TOKEN).
   moderation-worker:
@@ -162,9 +176,13 @@ configs:
       	}
       }
       :8080 {
-      	@sockets path /api/live /api/live/*
+      	@sockets path /live /live/*
       	handle @sockets {
       		reverse_proxy gateway:8095
+      	}
+      	@matchmaking path /matchmaking/*
+      	handle @matchmaking {
+      		reverse_proxy matchmaker:8097
       	}
       	encode zstd gzip
       	@api path /api /api/*

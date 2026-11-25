@@ -34,6 +34,7 @@ import (
 	"geoduels/pkg/live"
 	"geoduels/pkg/observability"
 	"geoduels/pkg/persistence"
+	"geoduels/pkg/sitesettings"
 )
 
 type api struct {
@@ -41,6 +42,7 @@ type api struct {
 	moderation             *moderation.Service
 	curation               *curation.Service
 	db                     *persistence.DB
+	settings               *sitesettings.Copy
 	accounts               *accounts.Service
 	sessions               authsession.Store
 	profiles               profiles.Store
@@ -147,7 +149,15 @@ func newAPI() (*api, error) {
 		return nil, errors.New("TURNSTILE_SECRET_KEY is required when TURNSTILE_GUEST_REQUIRED=true")
 	}
 	pool := store.Pool()
-	mapsStore := maps.NewPGStore(pool)
+	loadCtx, cancelLoad := context.WithTimeout(context.Background(), 10*time.Second)
+	settings, err := sitesettings.Load(loadCtx, pool)
+	cancelLoad()
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	go settings.Run(context.Background())
+	mapsStore := maps.NewPGStore(pool, settings)
 	workers := river.NewWorkers()
 	jobsClient, err := jobs.NewClient(pool, jobs.QueueLive, workers, nil)
 	if err != nil {
@@ -157,7 +167,7 @@ func newAPI() (*api, error) {
 	matchStore := matches.NewPGStore(pool, nil, jobsClient)
 	partyStore := parties.NewPGStore(pool, mapsStore)
 	partyService := parties.NewService(partyStore)
-	socialStore := socialdomain.NewPGStore(pool, jobsClient)
+	socialStore := socialdomain.NewPGStore(pool, jobsClient, settings)
 	contentStore := content.NewPGStore(pool, jobsClient)
 	seasonStore := seasons.NewPGStore(pool, jobsClient)
 	badgeStore := badges.NewPGStore(pool, jobsClient)
@@ -166,12 +176,13 @@ func newAPI() (*api, error) {
 	mapsService := maps.NewService(mapsStore)
 	instance := &api{
 		staff:                  staffctx.NewService(staffctx.NewPGStore(pool, jobsClient)),
-		moderation:             moderation.NewService(moderation.NewPGStore(pool, jobsClient), moderation.NewRiskEngineFromEnv()),
+		moderation:             moderation.NewService(moderation.NewPGStore(pool, jobsClient, settings), moderation.NewRiskEngineFromEnv()),
 		curation:               curation.NewService(curation.NewPGStore(pool, jobsClient)),
 		db:                     store,
+		settings:               settings,
 		accounts:               accountsService,
 		sessions:               authsession.NewPGStore(pool),
-		profiles:               profiles.NewPGStore(pool),
+		profiles:               profiles.NewPGStore(pool, settings),
 		badges:                 badges.NewService(badgeStore),
 		matchStore:             matchStore,
 		content:                content.NewService(contentStore),
@@ -182,7 +193,7 @@ func newAPI() (*api, error) {
 		maps:                   mapsService,
 		mapsStore:              mapsStore,
 		preferences:            preferencesdomain.NewService(preferencesdomain.NewPGStore(pool)),
-		leaderboardService:     leaderboard.NewService(leaderboard.NewPGStore(pool)),
+		leaderboardService:     leaderboard.NewService(leaderboard.NewPGStore(pool, settings)),
 		authSessionService:     authsession.NewService(authsession.NewPGStore(pool)),
 		queue:                  queue.NewPGStore(pool),
 		chat:                   chat.NewPGStore(pool),
@@ -231,7 +242,6 @@ func newAPI() (*api, error) {
 		store.Close()
 		return nil, err
 	}
-	go instance.runMatchmaker()
 	go instance.runPresenceSweep()
 	return instance, nil
 }
@@ -312,12 +322,9 @@ func routes(a *api) *echo.Echo {
 	e.GET("/api/player-search", a.socialPlayerSearch)
 	e.GET("/api/matches/:id", a.match)
 	e.POST("/api/matches/:id/reports", a.createMatchReport, a.active)
-	e.POST("/api/v2/matches", a.createMatch, a.active)
 	e.GET("/api/v2/matches/:id", a.getMatchView)
 	e.GET("/api/v2/matches/:id/bootstrap", a.matchBootstrap)
 	e.GET("/api/v2/me/match", a.myMatch)
-	e.POST("/api/v2/queue", a.joinQueue)
-	e.DELETE("/api/v2/queue", a.leaveQueue)
 	e.POST("/api/v2/parties", a.createParty)
 	e.POST("/api/v2/parties/:code/join", a.joinParty)
 	e.PUT("/api/v2/parties/:id/team", a.partyCommand(a.setPartyTeam))
@@ -326,7 +333,6 @@ func routes(a *api) *echo.Echo {
 	e.POST("/api/v2/parties/:id/kick", a.partyCommand(a.kickFromParty))
 	e.POST("/api/v2/parties/:id/transfer", a.partyCommand(a.transferParty))
 	e.POST("/api/v2/parties/:id/leave", a.partyCommand(a.leaveParty))
-	e.POST("/api/v2/parties/:id/start", a.partyCommand(a.startParty))
 	e.GET("/api/conversations/:id", a.getConversation)
 	e.POST("/api/conversations/:id/messages", a.sendMessage)
 	e.POST("/api/conversations/:id/read", a.markConversationRead)

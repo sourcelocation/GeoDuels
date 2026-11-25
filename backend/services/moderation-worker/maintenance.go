@@ -4,12 +4,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 
 	"geoduels/internal/accounts"
 	"geoduels/internal/curation"
 	"geoduels/internal/jobs"
 	"geoduels/internal/leaderboard"
+	"geoduels/internal/maps"
 	"geoduels/internal/moderation"
 	"geoduels/internal/seasons"
 	"geoduels/internal/storage"
@@ -81,7 +83,6 @@ func (w *storageCleanupWorker) Work(ctx context.Context, _ *river.Job[jobs.Stora
 			"auth_sessions":     result.AuthSessions,
 			"parties":           result.Parties,
 			"map_upload_events": result.MapUploadEvents,
-			"map_daily_users":   result.MapDailyUsers,
 			"inbox_messages":    result.InboxMessages,
 		})
 	}
@@ -142,4 +143,21 @@ func (w *curationSweepWorker) Work(ctx context.Context, _ *river.Job[jobs.Curati
 		return nil
 	}
 	return w.curation.RunSweep(ctx)
+}
+
+// mapStatsWorker recounts the maps' plays and trending scores from match history.
+type mapStatsWorker struct {
+	river.WorkerDefaults[jobs.MapStatsArgs]
+	pool *pgxpool.Pool
+}
+
+func (w *mapStatsWorker) Work(ctx context.Context, _ *river.Job[jobs.MapStatsArgs]) error {
+	result, err := maps.RefreshStats(ctx, w.pool)
+	if err != nil {
+		return err
+	}
+	if result != (maps.StatsRefresh{}) {
+		observability.Log("info", "map stats refreshed", map[string]any{"trending": result.Trending, "plays": result.Plays})
+	}
+	return nil
 }

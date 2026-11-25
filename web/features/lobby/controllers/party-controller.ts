@@ -1,6 +1,6 @@
 import { Listeners } from "../../../lib/listeners";
 import type { SessionController } from "../../auth/controllers/session-controller";
-import type { MatchConfig } from "../../matchmaking/lib/queue-client";
+import { startPartyMatch, type MatchConfig } from "../../matchmaking/lib/queue-client";
 import {
   createParty,
   joinParty,
@@ -43,10 +43,13 @@ export class PartyController {
   private readonly listeners = new Listeners();
   readonly subscribe = this.listeners.subscribe;
   private readonly sessionController: SessionController;
+  // onMatchStarted goes to the match the party's start answered with, the way a match.started event does.
+  private readonly onMatchStarted: (matchId: string) => void;
   private state: PartyRuntimeState = initialState;
 
-  constructor(params: { sessionController: SessionController }) {
+  constructor(params: { sessionController: SessionController; onMatchStarted: (matchId: string) => void }) {
     this.sessionController = params.sessionController;
+    this.onMatchStarted = params.onMatchStarted;
   }
 
   getState = () => this.state;
@@ -113,7 +116,18 @@ export class PartyController {
 
   transferOwner = (userId: string) => this.command("transfer", { method: "POST", body: { userId } }, "Could not transfer leader");
 
-  startParty = () => this.command("start", { method: "POST" }, "Could not start party");
+  /** Starts the party's match. The matchmaker starts it; the party itself changes through party.updated. */
+  startParty = async () => {
+    const { partyId } = this.state;
+    if (!partyId) return;
+    this.patch({ error: "" });
+    try {
+      const matchId = await startPartyMatch(await this.token(), partyId);
+      if (matchId) this.onMatchStarted(matchId);
+    } catch (error) {
+      this.patch({ error: errorMessage(error, "Could not start party") });
+    }
+  };
 
   updateSettings = (config: MatchConfig, mode?: PartyMode) =>
     this.command("settings", { method: "PUT", body: { config, mode } }, "Could not update party settings");

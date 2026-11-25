@@ -671,6 +671,7 @@ func (a *api) adminPutMaintenance(c echo.Context) error {
 	if err != nil {
 		return staffError(c, err)
 	}
+	a.settingsChanged(c.Request().Context())
 	return writeJSON(c, saved)
 }
 
@@ -682,6 +683,7 @@ func (a *api) adminClearMaintenance(c echo.Context) error {
 	if err := maintenance.Clear(c.Request().Context(), a.db.Pool(), actor); err != nil {
 		return staffError(c, err)
 	}
+	a.settingsChanged(c.Request().Context())
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -789,6 +791,7 @@ func (a *api) adminPutRankedSeasonResetRule(c echo.Context) error {
 		}
 		return staffError(c, err)
 	}
+	a.settingsChanged(c.Request().Context())
 	return writeJSON(c, settings)
 }
 

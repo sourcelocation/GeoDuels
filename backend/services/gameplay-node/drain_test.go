@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,9 +85,17 @@ func TestShutdownWithoutMaintenanceStillDrains(t *testing.T) {
 	}
 }
 
+// fakeSettings is a copy of the site settings holding these values.
+type fakeSettings map[string][]byte
+
+func (f fakeSettings) Value(key string) ([]byte, bool) {
+	value, ok := f[key]
+	return value, ok
+}
+
 func TestMaintenanceDrainsAdmissionButKeepsRolloutReady(t *testing.T) {
-	status, readErr := maintenance.Status{Phase: maintenance.PhaseActive}, error(nil)
-	g := gameplayNode{readMaintenance: func(context.Context) (maintenance.Status, error) { return status, readErr }}
+	settings := fakeSettings{"maintenance": []byte(`{"phase":"active"}`)}
+	g := gameplayNode{settings: settings}
 	g.refreshMaintenanceDrain()
 	if g.admitting() {
 		t.Fatal("maintenance admitted new matches")
@@ -107,10 +113,10 @@ func TestMaintenanceDrainsAdmissionButKeepsRolloutReady(t *testing.T) {
 		}
 	}
 	checkReady(http.StatusOK)
-	status, readErr = maintenance.DefaultStatus(), errors.New("database unavailable")
+	delete(settings, "maintenance")
 	g.refreshMaintenanceDrain()
-	if !g.drain.isDraining() {
-		t.Fatal("a failed maintenance read cleared the drain")
+	if g.drain.isDraining() {
+		t.Fatal("clearing maintenance kept the drain")
 	}
 	g.drain.startShutdown(time.Now())
 	checkReady(http.StatusServiceUnavailable)

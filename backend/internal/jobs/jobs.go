@@ -26,6 +26,7 @@ const (
 	KindSeasonReset      = "season_reset"
 	KindCurationSweep    = "curation_sweep"
 	KindLeaderboard      = "leaderboard_refresh"
+	KindMapStats         = "map_stats"
 	KindInboxChanged     = "inbox_changed"
 	KindPartyChanged     = "party_changed"
 	KindPresenceChanged  = "presence_changed"
@@ -95,6 +96,11 @@ func (CurationSweepArgs) Kind() string { return KindCurationSweep }
 type LeaderboardRefreshArgs struct{}
 
 func (LeaderboardRefreshArgs) Kind() string { return KindLeaderboard }
+
+// MapStatsArgs recounts the maps' plays and trending scores from match history.
+type MapStatsArgs struct{}
+
+func (MapStatsArgs) Kind() string { return KindMapStats }
 
 // InboxChangedArgs tells a person about a new inbox message.
 type InboxChangedArgs struct {
@@ -236,4 +242,5 @@ type PeriodicConfig struct {
 	SeasonResetInterval    time.Duration
 	CurationInterval       time.Duration
 	LeaderboardInterval    time.Duration
+	MapStatsInterval       time.Duration
 }

@@ -22,9 +22,21 @@ const Window = 7 * 24 * time.Hour
 
 type Cycle struct{ StartsAt, ClosesAt time.Time }
 
+// Winner is the nomination a cycle awards: the most liked one, or the top trending map when nobody
+// nominated anything.
 type Winner struct {
+	NominationID           int64
 	MapID, Name, CreatorID string
 	Likes                  int
+	FromTrending           bool
+}
+
+// Source is where the award came from, as motw_awards records it.
+func (w Winner) Source() string {
+	if w.FromTrending {
+		return "trending"
+	}
+	return "nomination"
 }
 
 // Nomination is one Map-of-the-Week submission.
@@ -65,8 +77,8 @@ func (s *Service) NominateMap(ctx context.Context, actor pkgstaff.Actor, mapID s
 	if err := actor.RequireCap(pkgstaff.CapCurate); err != nil {
 		return err
 	}
-	return s.withCycle(ctx, func(store Store, cycle Cycle) error {
-		return store.NominateMap(ctx, actor.ID, mapID, cycle.StartsAt)
+	return s.withCycle(ctx, func(store Store, _ Cycle) error {
+		return store.NominateMap(ctx, actor.ID, mapID)
 	})
 }
 
@@ -74,8 +86,8 @@ func (s *Service) LikeNomination(ctx context.Context, actor pkgstaff.Actor, id i
 	if err := actor.RequireCap(pkgstaff.CapCurate); err != nil {
 		return err
 	}
-	return s.withCycle(ctx, func(store Store, cycle Cycle) error {
-		return store.SetNominationLike(ctx, actor.ID, id, liked, cycle.StartsAt)
+	return s.withCycle(ctx, func(store Store, _ Cycle) error {
+		return store.SetNominationLike(ctx, actor.ID, id, liked)
 	})
 }
 
@@ -92,7 +104,7 @@ func (s *Service) ListNominations(ctx context.Context, actor pkgstaff.Actor, pag
 	var result Page
 	err := s.withCycle(ctx, func(store Store, cycle Cycle) error {
 		var err error
-		result, err = store.ListNominations(ctx, actor.ID, page, cycle)
+		result, err = store.ListNominations(ctx, actor.ID, page, cycle.ClosesAt)
 		return err
 	})
 	if err != nil {
@@ -138,9 +150,10 @@ func NextCycle(closesAt, now time.Time) (time.Time, time.Time) {
 	return start, start.Add(Window)
 }
 
-// withCycle serializes selection, awards and the caller's nomination
-// operation in the same transaction. Candidate ranking stays a store read;
-// choosing the fallback and awarding the creator are application decisions.
+// withCycle serializes selection, awards and the caller's nomination operation in the same
+// transaction. A closing cycle awards its most liked nomination and removes only that one; the rest
+// wait for the next week. With nothing nominated, the top trending map that never won is nominated
+// first, so the award always comes from the list.
 func (s *Service) withCycle(ctx context.Context, fn func(Store, Cycle) error) error {
 	return s.store.WithinTx(ctx, func(store Store) error {
 		cycle, err := store.LockCycle(ctx)
@@ -149,21 +162,16 @@ func (s *Service) withCycle(ctx context.Context, fn func(Store, Cycle) error) er
 		}
 		now := s.now()
 		if !now.Before(cycle.ClosesAt) {
-			winner, found, err := store.Winner(ctx, cycle.StartsAt)
+			winner, found, err := s.winner(ctx, store)
 			if err != nil {
 				return err
 			}
-			source := "nomination"
-			if !found {
-				winner, found, err = store.TrendingMap(ctx)
-				if err != nil {
-					return err
-				}
-				source = "trending"
-			}
 			var awardedAt time.Time
 			if found {
-				if err := store.SaveAward(ctx, cycle.StartsAt, now, winner, source); err != nil {
+				if err := store.SaveAward(ctx, cycle.StartsAt, now, winner); err != nil {
+					return err
+				}
+				if err := store.RemoveNomination(ctx, winner.NominationID); err != nil {
 					return err
 				}
 				if winner.CreatorID != "" {
@@ -180,4 +188,17 @@ func (s *Service) withCycle(ctx context.Context, fn func(Store, Cycle) error) er
 		}
 		return fn(store, cycle)
 	})
+}
+
+// winner is the nomination to award, after nominating the top trending map if the list is empty.
+func (s *Service) winner(ctx context.Context, store Store) (Winner, bool, error) {
+	winner, found, err := store.Winner(ctx)
+	if err != nil || found {
+		return winner, found, err
+	}
+	nominated, err := store.NominateTrending(ctx)
+	if err != nil || !nominated {
+		return Winner{}, false, err
+	}
+	return store.Winner(ctx)
 }

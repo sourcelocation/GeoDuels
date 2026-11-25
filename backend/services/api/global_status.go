@@ -7,6 +7,7 @@ import (
 
 	"geoduels/internal/presence"
 	"geoduels/pkg/maintenance"
+	"geoduels/pkg/observability"
 )
 
 const statusRefreshEvery = 10 * time.Second
@@ -41,9 +42,14 @@ func (s *statusCache) refresh() {
 	if err != nil {
 		return
 	}
-	status, err := s.api.maintenanceStatus(ctx)
-	if err != nil {
-		return
+	s.value.Store(&statusEvent{OnlinePlayers: online, Maintenance: maintenance.Current(s.api.settings)})
+}
+
+// settingsChanged rereads this process's copy of the site settings after it wrote one, so it follows
+// the change at once; other processes see it within sitesettings.RefreshEvery.
+func (a *api) settingsChanged(ctx context.Context) {
+	if err := a.settings.Refresh(ctx); err != nil {
+		observability.Log("warn", "site settings refresh failed", map[string]any{"error": err.Error()})
 	}
-	s.value.Store(&statusEvent{OnlinePlayers: online, Maintenance: status})
+	a.status.refresh()
 }

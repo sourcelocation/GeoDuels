@@ -1,17 +1,13 @@
 
 import { apiFetch, apiSocketURL, authHeaders, mergeHeaders, readError } from '../../../lib/http';
 import type { MatchKind, Snapshot } from '../../game/model/types';
+import type { ActiveMatch, QueueState } from '../../live/events';
 
 export type GameRuleset = 'moving' | 'no_move' | 'nmpz';
 export type StreetNamesVisibility = 'shown' | 'hidden';
 export type MultiplierMode = 'shared' | 'individual';
-export type QueueVariant =
-  | 'moving'
-  | 'no_move'
-  | 'nmpz'
-  | 'moving_hidden'
-  | 'no_move_hidden'
-  | 'nmpz_hidden';
+/** A ranked queue's id, as the matchmaker offers it. */
+export type QueueVariant = string;
 export type MatchConfig = {
   ruleset?: GameRuleset;
   streetNames?: StreetNamesVisibility;
@@ -40,17 +36,67 @@ export type MaintenanceStatus = {
   message: string;
 };
 
-export async function enterQueue(token: string, queues: QueueVariant[]) {
-  const response = await apiFetch('/api/v2/queue', {
-    method: 'POST',
-    headers: mergeHeaders(authHeaders(token), { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ queues: queues.join(',') }),
-  });
-  if (!response.ok) throw new Error(await readError(response, 'Queue unavailable'));
+/** A ranked queue: a named match config the matchmaker offers. */
+export type RankedQueue = { id: string; title: string; detail?: string; config: MatchConfig };
+
+/** Whether a match in this config needs the browser extension: no moving, or no street names. */
+export function needsExtension(config: Pick<MatchConfig, 'ruleset' | 'streetNames'>) {
+  return config.ruleset === 'no_move' || config.streetNames === 'hidden';
 }
 
-export async function leaveQueue(token: string) {
-  await apiFetch('/api/v2/queue', { method: 'DELETE', headers: authHeaders(token) });
+function isRankedQueue(value: any): value is RankedQueue {
+  return typeof value?.id === 'string' && value.id !== '' && typeof value?.title === 'string' && typeof value?.config === 'object' && value.config !== null;
+}
+
+/** The ranked queues the matchmaker offers, in the order players see them. */
+export async function fetchRankedQueues(signal?: AbortSignal): Promise<RankedQueue[]> {
+  const response = await apiFetch('/matchmaking/queues', { signal });
+  if (!response.ok) throw new Error('Queues unavailable');
+  const data = await response.json();
+  return Array.isArray(data?.queues) ? data.queues.filter(isRankedQueue) : [];
+}
+
+/** What joining or leaving the queue answers: where the player is in it, or the match they're in. */
+export type QueueReply = { queue?: QueueState; match?: ActiveMatch };
+
+export async function enterQueue(token: string, queues: QueueVariant[]): Promise<QueueReply> {
+  const response = await apiFetch('/matchmaking/queue', {
+    method: 'POST',
+    headers: mergeHeaders(authHeaders(token), { 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ queues }),
+  });
+  if (!response.ok) throw new Error(await readError(response, 'Queue unavailable'));
+  return (await response.json()) as QueueReply;
+}
+
+export async function leaveQueue(token: string): Promise<QueueReply> {
+  const response = await apiFetch('/matchmaking/queue', { method: 'DELETE', headers: authHeaders(token) });
+  if (!response.ok) throw new Error(await readError(response, 'Queue unavailable'));
+  return (await response.json()) as QueueReply;
+}
+
+/** The message a failed start answers with. */
+async function startError(response: Response, fallback: string) {
+  const text = await response.text();
+  try {
+    const data = JSON.parse(text);
+    if (typeof data?.message === 'string' && data.message) return data.message;
+    if (typeof data?.error === 'string' && data.error) return data.error;
+  } catch {
+    // A plain-text answer is the message itself.
+  }
+  return text || fallback;
+}
+
+/** Starts the party's match with every member seated, returning its id. Only the party's owner can. */
+export async function startPartyMatch(token: string, partyId: string): Promise<string> {
+  const response = await apiFetch(`/matchmaking/parties/${encodeURIComponent(partyId)}/start`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  if (!response.ok) throw new Error(await startError(response, 'Could not start party'));
+  const data = await response.json();
+  return typeof data?.matchId === 'string' ? data.matchId : '';
 }
 
 export type MatchViewStatus = 'starting' | 'live' | 'ended' | 'interrupted' | 'missing' | 'forbidden';
@@ -179,34 +225,24 @@ export async function bootstrapMatchView(
   };
 }
 
-// startSoloMatch starts a match the player plays alone and returns its view once a node runs it.
+// startSoloMatch starts a match the player plays alone and returns it, starting.
 export async function startSoloMatch(
   accessToken: string,
   signal: AbortSignal,
   matchConfig?: MatchConfig,
   returnTarget?: MatchReturnTarget,
 ): Promise<MatchView> {
-  const resp = await apiFetch('/api/v2/matches', {
+  const resp = await apiFetch('/matchmaking/matches', {
     method: 'POST',
     headers: mergeHeaders(authHeaders(accessToken), { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ kind: 'solo', config: matchConfig || {}, ...(returnTarget ? { returnTarget } : {}) }),
     signal,
   });
-  if (!resp.ok) {
-    let message = 'Singleplayer unavailable';
-    try {
-      const data = await resp.json();
-      if (typeof data?.message === 'string' && data.message) message = data.message;
-      else if (typeof data?.error === 'string' && data.error) message = data.error;
-    } catch {
-      // Keep the generic message.
-    }
-    throw new Error(message);
-  }
+  if (!resp.ok) throw new Error(await startError(resp, 'Singleplayer unavailable'));
   return normalizeMatchView(await resp.json(), '');
 }
 
 // matchSocketURL is where a seated player connects to play a match. The session cookie says who they are.
 export function matchSocketURL(matchId: string) {
-  return apiSocketURL(`/api/live/matches/${encodeURIComponent(matchId)}`);
+  return apiSocketURL(`/live/matches/${encodeURIComponent(matchId)}`);
 }

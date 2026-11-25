@@ -362,10 +362,8 @@ func recordMatchHistory(
 		sourcePartyID = partyID
 	}
 	ruleset := string(gameplay.NormalizeRuleset(snap.Config.Ruleset))
+	// The node names the map it played in the match's config.
 	mapID := snap.Config.MapID
-	if planMapID, err := q.GetMatchRoundPlanMapID(ctx, matchUUID); err == nil && planMapID.Valid {
-		mapID = storekit.UUIDVal(planMapID)
-	}
 	if err := q.UpsertMatchHistory(ctx, db.UpsertMatchHistoryParams{
 		MatchID:                 matchUUID,
 		Mode:                    db.GdMatchMode(spec.Mode),

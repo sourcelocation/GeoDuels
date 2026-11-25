@@ -31,3 +31,22 @@ update users set social_discoverable=$2, social_presence_visible=$3, social_requ
 
 -- name: UpsertUser :exec
 insert into users (id,email,display_name,avatar_url) values ($1,$2,$3,null) on conflict (id) do update set email=excluded.email, display_name=excluded.display_name;
+
+-- name: ListMatchProfiles :many
+-- What a match shows of its players and rates them by: names, avatars, ratings and ranked games in
+-- the season, and the badge each shows.
+SELECT u.id AS user_id, gd_display_name(u.display_name, ui.provider_name, u.id) AS display_name,
+       coalesce(u.avatar_url, ui.avatar_url, '') AS avatar_url,
+       coalesce(r.mmr, sqlc.arg(default_mmr)::int)::int AS mmr, coalesce(r.rd, sqlc.arg(default_rd)::float8)::float8 AS rating_rd,
+       coalesce(r.games_played, 0)::int AS ranked_games_played,
+       gd_is_guest(u.id)::boolean AS is_guest, gd_is_admin(u.id)::boolean AS is_admin,
+       coalesce(ub.badge_code, 0)::smallint AS badge_code, coalesce(ub.level, 1)::smallint AS badge_level,
+       coalesce(ub.extra, 0)::smallint AS badge_extra
+FROM users u
+LEFT JOIN LATERAL (
+    SELECT provider_name, avatar_url FROM user_identities WHERE user_id = u.id AND provider IN ('discord', 'google')
+    ORDER BY CASE provider WHEN 'discord' THEN 0 WHEN 'google' THEN 1 ELSE 2 END, created_at ASC LIMIT 1
+) ui ON true
+LEFT JOIN ranks r ON r.user_id = u.id AND r.mode = sqlc.arg(mode) AND r.season_id = sqlc.arg(season_id)
+LEFT JOIN user_badges ub ON ub.user_id = u.id AND ub.badge_code = u.selected_badge_code
+WHERE u.id = ANY(sqlc.arg(user_ids)::uuid[]);

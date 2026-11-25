@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"log"
 	"net/http"
 	"time"
 
@@ -16,11 +14,11 @@ import (
 )
 
 // A match has one address, /api/v2/matches/{id}: its view says what it is and whether it is being
-// played, and a seated player connects to it at /api/live/matches/{id}, which the gateway forwards to
+// played, and a seated player connects to it at /live/matches/{id}, which the gateway forwards to
 // the gameplay node running it.
 
 const (
-	// placementWait is how long a start or a connect waits for a node to pick the match up.
+	// placementWait is how long a connect waits for a node to pick the match up.
 	placementWait = 10 * time.Second
 	placementPoll = 150 * time.Millisecond
 )
@@ -54,7 +52,7 @@ func matchViewStatusOf(status matches.SessionStatus) matchViewStatus {
 
 // matchView is everything a client needs about a match: what it is, whether it is being played and
 // whether the viewer plays in it, where to go after it, and how it ended. A seated viewer of a
-// starting or live match connects to /api/live/matches/{id}.
+// starting or live match connects to /live/matches/{id}.
 type matchView struct {
 	MatchID string                      `json:"matchId"`
 	Kind    matchkind.Kind              `json:"kind,omitempty"`
@@ -107,13 +105,6 @@ func (t *matchReturnTarget) target() *matches.ReturnTarget {
 		return nil
 	}
 	return &matches.ReturnTarget{Kind: matches.ReturnKind(t.Kind), MapID: t.MapID, PartyID: t.PartyID, PartyInviteCode: t.PartyInviteCode}
-}
-
-// matchStartRequest starts a match the viewer plays alone.
-type matchStartRequest struct {
-	Kind         matchkind.Kind             `json:"kind"`
-	Config       gameplay.ClientMatchConfig `json:"config"`
-	ReturnTarget *matchReturnTarget         `json:"returnTarget,omitempty"`
 }
 
 // matchBootstrapResponse is a match page's view together with the session it bootstraps.
@@ -263,57 +254,6 @@ func (a *api) activeMatch(ctx context.Context, userID string) *activeMatchSummar
 		return nil
 	}
 	return &activeMatchSummary{MatchID: current.MatchID, Kind: current.Kind, Mode: matchkind.Of(current.Kind).Mode, Status: matchViewStatusOf(current.Status)}
-}
-
-// createMatch starts a match the player plays alone and returns its view once a node runs it.
-func (a *api) createMatch(c echo.Context) error {
-	r := c.Request()
-	claims, err := a.authenticatedClaims(r)
-	if err != nil {
-		return plainTextError(c, http.StatusUnauthorized, "unauthorized")
-	}
-	var req matchStartRequest
-	if err := decodeJSONBody(r, &req); err != nil {
-		return plainTextError(c, http.StatusBadRequest, "invalid payload")
-	}
-	if matchkind.Of(req.Kind).Origin != matchkind.OriginDirect {
-		return plainTextError(c, http.StatusBadRequest, "this kind of match cannot be started directly")
-	}
-	config := gameplay.NormalizeMatchConfig(req.Config.MatchConfig())
-	target := matches.NormalizeReturnTarget(req.ReturnTarget.target())
-	if target.Kind == matches.ReturnParty {
-		target = &matches.ReturnTarget{Kind: matches.ReturnHome}
-	}
-	userID := claims.Sub
-	matchID, err := a.startMatch(r.Context(), startRequest{
-		Kind: req.Kind, Seats: []matchkind.Seat{{UserID: userID}}, Config: config,
-		MapAccessUserID: userID, ReturnTarget: target,
-	})
-	if err != nil {
-		return a.writeStartError(c, err)
-	}
-	a.awaitPlacement(r.Context(), matchID)
-	view, err := a.viewMatch(r.Context(), userID, matchID)
-	if err != nil {
-		return plainTextError(c, http.StatusBadGateway, "match unavailable")
-	}
-	return writeJSONStatus(c, http.StatusCreated, view)
-}
-
-func (a *api) writeStartError(c echo.Context, err error) error {
-	var admission *admissionError
-	if errors.As(err, &admission) {
-		if admission.UserID == "" {
-			return writeAPIError(c, http.StatusServiceUnavailable, "maintenance", admission.Reason)
-		}
-		return writeAPIError(c, http.StatusForbidden, "not_admitted", admission.Reason)
-	}
-	var conflict *matches.ConflictError
-	if errors.As(err, &conflict) {
-		return writeJSONStatus(c, http.StatusConflict, map[string]string{"code": "ACTIVE_MATCH", "message": a.startErrorMessage(err), "matchId": conflict.MatchID})
-	}
-	log.Printf("match start failed: %v", err)
-	return plainTextError(c, http.StatusBadGateway, "match could not start")
 }
 
 // awaitPlacement waits until a node picks the match up or the wait runs out.

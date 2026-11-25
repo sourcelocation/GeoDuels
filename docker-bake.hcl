@@ -27,7 +27,7 @@ group "default" { targets = ["backend", "web"] }
 target "backend" {
   name = service
   matrix = {
-    service = ["api", "gateway", "discord-worker", "moderation-worker", "gameplay-node"]
+    service = ["api", "gateway", "matchmaker", "discord-worker", "moderation-worker", "gameplay-node"]
   }
   context = "backend"
   dockerfile = "services/${service}/Dockerfile"

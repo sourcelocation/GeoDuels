@@ -25,19 +25,22 @@ import (
 	"geoduels/internal/jobs"
 	"geoduels/internal/maps"
 	"geoduels/internal/matches"
+	"geoduels/internal/profiles"
+	"geoduels/internal/storekit"
 	"geoduels/pkg/controlplane"
 	"geoduels/pkg/duel"
 	"geoduels/pkg/gameplay"
-	"geoduels/pkg/maintenance"
 	"geoduels/pkg/matchkind"
 	"geoduels/pkg/observability"
 	"geoduels/pkg/persistence"
 	"geoduels/pkg/singleplayer"
+	"geoduels/pkg/sitesettings"
 )
 
 // A gameplay node runs matches in memory. It holds a lease named after it in control_plane_leases;
 // a match it picks up is stamped with the lease's fencing token and stays live while that lease
-// holds (gd_match_status). Nothing else tells it what to run: it takes waiting matches itself.
+// holds (gd_match_status). Nothing else tells it what to run: it takes waiting matches itself, picks
+// their rounds on their map and reads their players, and plays them.
 const (
 	wsWriteWait  = 10 * time.Second
 	wsPongWait   = 70 * time.Second
@@ -57,6 +60,11 @@ const (
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 
+// siteSettings is the process's copy of the site settings (sitesettings.Copy).
+type siteSettings interface {
+	Value(key string) ([]byte, bool)
+}
+
 type gameplayNode struct {
 	mu sync.RWMutex
 
@@ -64,11 +72,12 @@ type gameplayNode struct {
 	internalURL string
 	internal    string
 
-	db      *persistence.DB
-	persist matches.Store
-	maps    *maps.PGStore
-	leases  controlplane.LeaseStore
-	lease   controlplane.Lease
+	db       *persistence.DB
+	settings siteSettings
+	persist  matches.Store
+	maps     *maps.PGStore
+	leases   controlplane.LeaseStore
+	lease    controlplane.Lease
 
 	plans *roundPlanRegistry
 
@@ -88,9 +97,8 @@ type gameplayNode struct {
 
 	metrics *observability.RuntimeMetrics
 
-	readMaintenance func(context.Context) (maintenance.Status, error)
-	drain           gameplayDrain
-	drainTTL        time.Duration
+	drain    gameplayDrain
+	drainTTL time.Duration
 	// matchEnded wakes a drain when a match leaves the node.
 	matchEnded chan struct{}
 }
@@ -114,7 +122,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	mapStore := maps.NewPGStore(db.Pool())
+	loadCtx, cancelLoad := context.WithTimeout(context.Background(), 10*time.Second)
+	settings, err := sitesettings.Load(loadCtx, db.Pool())
+	cancelLoad()
+	if err != nil {
+		log.Fatal(err)
+	}
+	go settings.Run(context.Background())
+	mapStore := maps.NewPGStore(db.Pool(), settings)
 	// Dev-only: import the bundled sample dataset when a required playable
 	// map is missing; production nodes leave DEV_MAP_DATASET unset.
 	if datasetPath := envcfg.Get("DEV_MAP_DATASET", ""); datasetPath != "" {
@@ -140,6 +155,7 @@ func main() {
 		internalURL: internalURL,
 		internal:    internalSecret,
 		db:          db,
+		settings:    settings,
 		persist:     matches.NewPGStore(db.Pool(), jobsClient.EnqueueMatchAnalyze, jobsClient),
 		maps:        mapStore,
 		leases:      leases,
@@ -159,9 +175,6 @@ func main() {
 		lastTeamPing: map[string]time.Time{},
 		lastPlayed:   map[string]time.Time{},
 		metrics:      observability.NewRuntimeMetrics(),
-		readMaintenance: func(ctx context.Context) (maintenance.Status, error) {
-			return maintenance.Read(ctx, db.Pool())
-		},
 		// Only a backstop: a drain ends once no match is in use.
 		drainTTL:   envcfg.Duration("GAMEPLAY_DRAIN_TIMEOUT", 2*time.Hour),
 		matchEnded: make(chan struct{}, 1),
@@ -358,29 +371,35 @@ func (g *gameplayNode) pickupLoop() {
 	}
 }
 
-// startMatch creates a picked-up match in memory. It runs in the pickup's transaction: if it fails,
-// the match waits for another node.
-func (g *gameplayNode) startMatch(m matches.PickedUp) error {
+// startMatch creates a picked-up match in memory: it picks the match's rounds on its map and reads
+// its players, and returns the config it plays, naming the map. It runs in the pickup's transaction:
+// a match it can't start ends as aborted.
+func (g *gameplayNode) startMatch(m matches.PickedUp) (gameplay.MatchConfig, error) {
 	spec, ok := matchkind.Lookup(m.Kind)
 	if !ok {
-		return errors.New("unknown match kind")
+		return m.Config, errors.New("unknown match kind")
 	}
 	runtime := g.runtimes[spec.Engine]
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	rounds, err := g.maps.MatchRounds(ctx, m.MatchID)
+	config, rounds, err := g.maps.PickRounds(ctx, m.MatchID, spec.Mode, m.Config)
 	if err != nil {
-		return err
+		return config, err
+	}
+	seasonID := m.Spec.SeasonID
+	if seasonID == "" {
+		seasonID = storekit.CurrentSeasonID(g.settings)
+	}
+	players := m.Spec.UserIDs()
+	seated, err := profiles.MatchProfiles(ctx, g.db.Pool(), players, seasonID)
+	if err != nil {
+		return config, err
 	}
 	g.plans.Set(m.MatchID, rounds)
-	created := newMatch{MatchID: m.MatchID, Kind: m.Kind, Profiles: map[string]gameplay.PlayerProfile{}, Teams: m.Spec.SeatTeams(), SeasonID: m.Spec.SeasonID, Config: m.Config}
-	for _, seat := range m.Spec.Seats {
-		created.Players = append(created.Players, seat.Profile.UserID)
-		created.Profiles[seat.Profile.UserID] = seat.Profile
-	}
+	created := newMatch{MatchID: m.MatchID, Kind: m.Kind, Players: players, Profiles: seated, Teams: m.Spec.SeatTeams(), SeasonID: m.Spec.SeasonID, Config: config}
 	if err := runtime.CreateMatch(created); err != nil {
 		g.plans.Delete(m.MatchID)
-		return err
+		return config, err
 	}
 	now := time.Now()
 	g.mu.Lock()
@@ -389,7 +408,7 @@ func (g *gameplayNode) startMatch(m matches.PickedUp) error {
 	g.heldSince[m.MatchID] = now
 	g.lastPlayed[m.MatchID] = now
 	g.mu.Unlock()
-	return nil
+	return config, nil
 }
 
 func (g *gameplayNode) ws(c echo.Context) error {

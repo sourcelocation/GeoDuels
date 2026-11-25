@@ -20,12 +20,13 @@ import (
 // comments, creator trust, gameplay roles, official map revisions, and the
 // gameplay map settings used at match launch.
 type PGStore struct {
-	pool *pgxpool.Pool
-	db   *db.Queries
+	pool     *pgxpool.Pool
+	db       *db.Queries
+	settings Settings
 }
 
-func NewPGStore(pool *pgxpool.Pool) *PGStore {
-	return &PGStore{pool: pool, db: db.New(pool)}
+func NewPGStore(pool *pgxpool.Pool, settings Settings) *PGStore {
+	return &PGStore{pool: pool, db: db.New(pool), settings: settings}
 }
 
 func (s *PGStore) withTx(ctx context.Context, fn func(pgx.Tx) error) error {

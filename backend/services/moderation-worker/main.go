@@ -25,6 +25,7 @@ import (
 	"geoduels/pkg/observability"
 	"geoduels/pkg/persistence"
 	db "geoduels/pkg/persistence/sqlc/db"
+	"geoduels/pkg/sitesettings"
 )
 
 const (
@@ -90,13 +91,21 @@ func newWorker() (*worker, error) {
 		return nil, err
 	}
 	contentStore := content.NewPGStore(pool, producer)
-	moderationService := moderation.NewService(moderation.NewPGStore(pool, producer), moderation.NewRiskEngineFromEnv())
+	loadCtx, cancelLoad := context.WithTimeout(context.Background(), 10*time.Second)
+	settings, err := sitesettings.Load(loadCtx, pool)
+	cancelLoad()
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	go settings.Run(context.Background())
+	moderationService := moderation.NewService(moderation.NewPGStore(pool, producer, settings), moderation.NewRiskEngineFromEnv())
 	curationService := curation.NewService(curation.NewPGStore(pool, producer))
 	accountsStore := accounts.NewPGStore(pool, producer)
 	accountsService := accounts.NewService(accountsStore)
 	storageStore := storage.NewPGStore(pool, producer)
 	seasonsStore := seasons.NewPGStore(pool, producer)
-	leaderboardService := leaderboard.NewService(leaderboard.NewPGStore(pool))
+	leaderboardService := leaderboard.NewService(leaderboard.NewPGStore(pool, settings))
 
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &matchAnalyzeWorker{moderation: moderationService})
@@ -113,6 +122,7 @@ func newWorker() (*worker, error) {
 	river.AddWorker(workers, &seasonResetWorker{seasons: seasonsStore, leaderboard: leaderboardService})
 	river.AddWorker(workers, &curationSweepWorker{curation: curationService})
 	river.AddWorker(workers, &leaderboardRefreshWorker{leaderboard: leaderboardService})
+	river.AddWorker(workers, &mapStatsWorker{pool: pool})
 
 	periodic := jobs.PeriodicJobs(jobs.PeriodicConfig{
 		GuestCleanupInterval:   getenvDuration("GUEST_ACCOUNT_CLEANUP_INTERVAL", time.Hour),
@@ -120,6 +130,7 @@ func newWorker() (*worker, error) {
 		SeasonResetInterval:    time.Minute,
 		CurationInterval:       time.Minute,
 		LeaderboardInterval:    time.Minute,
+		MapStatsInterval:       getenvDuration("MAP_STATS_INTERVAL", 5*time.Minute),
 	})
 	jobsClient, err := jobs.NewClient(pool, river.QueueDefault, workers, periodic)
 	if err != nil {

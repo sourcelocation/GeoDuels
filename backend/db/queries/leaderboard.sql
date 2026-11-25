@@ -3,9 +3,6 @@ INSERT INTO site_settings(key, value_json, updated_at)
 VALUES ('ranked_season', convert_from($1, 'UTF8')::jsonb, now())
 ON CONFLICT (key) DO NOTHING;
 
--- name: GetActiveSeasonID :one
-SELECT (value_json->>'activeSeasonId')::text FROM site_settings WHERE key = 'ranked_season';
-
 -- Who is on a season's leaderboard, and in what order, is leaderboard_standings. Pages and profiles
 -- read the places it gave at the last refresh, kept on ranks.
 

@@ -30,7 +30,7 @@ type Store interface {
 	// ReplaceMapLocations is the administrative revision path for official
 	// map datasets, used by admins and the development bootstrap tool.
 	ReplaceMapLocations(mapKey, displayName string, dataset []byte) (ImportSummary, error)
-	GetGameplayMapSettings() (GameplaySettings, error)
+	GetGameplayMapSettings() GameplaySettings
 	ResolveGameplayMapID(mode matchkind.Mode, ruleset gameplay.Ruleset, requestedMapID string) (string, error)
 	MapCreatorAdminRepository
 }
@@ -137,7 +137,7 @@ func (s *Service) ReplaceMapLocations(actor pkgstaff.Actor, mapKey, displayName 
 	return s.store.ReplaceMapLocations(mapKey, displayName, dataset)
 }
 
-func (s *Service) GetGameplayMapSettings() (GameplaySettings, error) {
+func (s *Service) GetGameplayMapSettings() GameplaySettings {
 	return s.store.GetGameplayMapSettings()
 }
 

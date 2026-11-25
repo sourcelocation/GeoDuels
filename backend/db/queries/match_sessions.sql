@@ -57,26 +57,29 @@ WITH ended AS (
 )
 SELECT ended.source_party_id FROM ended;
 
--- name: InsertMatchSession :exec
-INSERT INTO match_sessions(
-    match_id, kind, source_party_id, config_json, map_id, spec_json,
-    return_target_kind, return_target_map_id, return_target_party_id
+-- name: StartMatch :many
+-- Writes a new match and seats its players in one statement, returning who was seated. A player
+-- already seated in another match isn't, and the caller rolls the start back.
+WITH session AS (
+    INSERT INTO match_sessions(
+        match_id, kind, source_party_id, config_json, spec_json,
+        return_target_kind, return_target_map_id, return_target_party_id
+    )
+    VALUES(
+        sqlc.arg(match_id), sqlc.arg(kind), sqlc.narg(source_party_id),
+        convert_from(sqlc.arg(config_json), 'UTF8')::jsonb, convert_from(sqlc.arg(spec_json), 'UTF8')::jsonb,
+        sqlc.arg(return_target_kind), sqlc.narg(return_target_map_id), sqlc.narg(return_target_party_id)
+    )
+    RETURNING match_id, source_party_id
 )
-VALUES(
-    sqlc.arg(match_id), sqlc.arg(kind), sqlc.narg(source_party_id),
-    convert_from(sqlc.arg(config_json), 'UTF8')::jsonb, sqlc.narg(map_id),
-    convert_from(sqlc.arg(spec_json), 'UTF8')::jsonb,
-    sqlc.arg(return_target_kind), sqlc.narg(return_target_map_id), sqlc.narg(return_target_party_id)
-);
-
--- name: InsertMatchSeat :execrows
--- Seats a player in a new match. No row is written when the player is already in another one.
 INSERT INTO match_participants(match_id, user_id, team_id, display_name, avatar_url, joined_party_at, active)
-VALUES(sqlc.arg(match_id), sqlc.arg(user_id), sqlc.narg(team_id), sqlc.arg(display_name), sqlc.arg(avatar_url), sqlc.narg(joined_party_at), true)
-ON CONFLICT (user_id) WHERE active DO NOTHING;
-
--- name: ParticipantJoinedAt :one
-SELECT joined_at FROM party_members WHERE party_id = $1 AND user_id = $2;
+SELECT session.match_id, seat.user_id, nullif(seat.team_id, ''), seat.display_name, seat.avatar_url, pm.joined_at, true
+FROM session
+CROSS JOIN jsonb_to_recordset(convert_from(sqlc.arg(seats_json), 'UTF8')::jsonb)
+    AS seat(user_id uuid, team_id text, display_name text, avatar_url text)
+LEFT JOIN party_members pm ON pm.party_id = session.source_party_id AND pm.user_id = seat.user_id
+ON CONFLICT (user_id) WHERE active DO NOTHING
+RETURNING user_id;
 
 -- name: PickUpWaitingMatch :one
 -- The oldest match no node has picked up yet, locked for this node.
@@ -88,8 +91,10 @@ LIMIT 1
 FOR UPDATE SKIP LOCKED;
 
 -- name: PlaceMatch :exec
+-- Stamps a match with the node running it, and with the map and config it plays there.
 UPDATE match_sessions
-SET node_id = sqlc.arg(node_id), node_epoch = sqlc.arg(node_epoch), node_url = sqlc.arg(node_url), started_at = now()
+SET node_id = sqlc.arg(node_id), node_epoch = sqlc.arg(node_epoch), node_url = sqlc.arg(node_url), started_at = now(),
+    map_id = sqlc.arg(map_id), config_json = convert_from(sqlc.arg(config_json), 'UTF8')::jsonb
 WHERE match_id = sqlc.arg(match_id) AND node_id IS NULL AND ended_at IS NULL;
 
 -- name: ListNodeOpenMatches :many

@@ -58,7 +58,8 @@ func (s Status) PlayBlocked() bool {
 	return s.PlayPaused
 }
 
-// Read returns the maintenance status every service follows; normal when none was set.
+// Read returns the maintenance status every service follows, from the database; normal when none
+// was set.
 func Read(ctx context.Context, q db.DBTX) (Status, error) {
 	raw, err := db.New(q).GetSetting(ctx, settingKey)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -67,6 +68,29 @@ func Read(ctx context.Context, q db.DBTX) (Status, error) {
 	if err != nil {
 		return DefaultStatus(), err
 	}
+	return decode(raw)
+}
+
+// Settings is a process's copy of the site settings (sitesettings.Copy).
+type Settings interface {
+	Value(key string) ([]byte, bool)
+}
+
+// Current is the status in the process's copy of the settings; normal when none was set or it
+// can't be read.
+func Current(settings Settings) Status {
+	raw, ok := settings.Value(settingKey)
+	if !ok {
+		return DefaultStatus()
+	}
+	status, err := decode(raw)
+	if err != nil {
+		return DefaultStatus()
+	}
+	return status
+}
+
+func decode(raw []byte) (Status, error) {
 	var status Status
 	if err := json.Unmarshal(raw, &status); err != nil {
 		return DefaultStatus(), err

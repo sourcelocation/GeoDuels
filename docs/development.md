@@ -31,7 +31,7 @@ A type lives in the slice that owns it; there is no shared package of types.
 Entities stay in their module (`internal/*`, or `pkg/gameplay` and `pkg/matchkind`
 for matches) and carry JSON tags only when that JSON is how they are stored,
 such as a replay or a match config. What clients send and receive are DTOs
-defined beside the handler that speaks them in `services/api` or
+defined beside the handler that speaks them in `services/api`, `services/matchmaker` or
 `services/gameplay-node`, mapped from entities explicitly; match state reaches
 clients only through the `Client*` views in `pkg/gameplay`.
 
@@ -41,23 +41,37 @@ A match's kind (`pkg/matchkind`) is its one description: rated or not, which map
 be in it, and whether starting another match replaces it. Its row in `match_sessions` is the only
 record of it while it runs; nothing about matches lives anywhere else.
 
-- `services/api` starts every match in one transaction (`match_start.go`): the queue's matchmaker,
-  a party's start command and `POST /api/v2/matches` all go through it. A player holds at most one
-  unfinished seat (`match_participants_one_active`).
+- `services/matchmaker` creates every match, and nothing else does. Players ask it directly under
+  `/matchmaking`: to wait in the ranked queues, or to start a match alone or with their party. A start
+  takes its players' queue tickets, checks they may play, and writes the match and its seats in one
+  statement, all in one transaction (`start.go`). A player holds at most one unfinished seat
+  (`match_participants_one_active`). The queue is the `queue_tickets` table: any number of replicas
+  pair it at once, each locking the tickets no other holds, the moment someone joins and every second
+  after (`internal/queue`, `pairing.go`). Which ranked queues are offered is the `ranked_queues` setting.
 - A gameplay node holds a lease named `gameplay-node:<id>` in `control_plane_leases`, picks up
-  waiting matches itself and stamps them with the lease's fencing token. A match is live while that
-  lease holds (`gd_match_status`); a node that dies takes its matches with it within the lease's
-  ten seconds. A new match frees its players' seats in such matches itself; the storage job only
-  records their end so the rows can be cleaned up.
-- Clients read `GET /api/v2/matches/{id}` and play over `/api/live/matches/{id}`, which the gateway
+  waiting matches itself and stamps them with the lease's fencing token. It picks a match's rounds on
+  its map and reads its players at pickup; nothing stores the rounds ahead, and the replay records the
+  ones played. A match is live while that lease holds (`gd_match_status`); a node that dies takes its
+  matches with it within the lease's ten seconds. A new match frees its players' seats in such
+  matches itself; the storage job only records their end so the rows can be cleaned up.
+- A map's plays and trending score are counted from match history by a periodic job
+  (`maps.RefreshStats`), so nothing a match does writes its map.
+- Clients read `GET /api/v2/matches/{id}` and play over `/live/matches/{id}`, which the gateway
   forwards to the node running the match.
+
+Every process keeps a copy of the site settings (`pkg/sitesettings`): maintenance, the ranked season,
+the gameplay maps and the ranked queues, read in one query at start and once a minute after. A process
+that writes a setting rereads its copy at once. A write that depends on the season reads it in its own
+transaction instead.
 
 ### Live
 
 Two services handle what people see as it happens, and both can run at any number of replicas:
 
-- `services/api` answers HTTP. Everything anyone does is an HTTP call, and anything that happens is
-  published after it commits, to the person's NATS subject (`pkg/live`), as the JSON the browser gets.
+- `services/api` answers HTTP. Everything anyone does is an HTTP call, answered in its response, and
+  anything that happens that someone didn't ask for in that request is published after it commits, to
+  the person's NATS subject (`pkg/live`), as the JSON the browser gets. The matchmaker publishes its
+  own events (`queue.updated`, `match.started`) the same way.
   A transaction elsewhere that needs people told asks for a River job on the `live` queue, which the
   API works once it commits (`jobs.Teller`).
 - `services/gateway` holds the browser's sockets and has no database. It forwards what's published
@@ -68,7 +82,7 @@ Nothing is kept along the way, and nothing has to be: every connection starts wi
 holding everything the client needs, read after subscribing, so losing an event only delays it until the
 next reconnect. A client too far behind is disconnected, and a gateway that loses NATS asks all its
 clients to reconnect. Each event has an example in `tests/shared/live-events.json`, which the server's
-and the web client's tests both check; `UPDATE_FIXTURES=1 go test ./services/api` rewrites it. A party
+and the web client's tests both check; `UPDATE_FIXTURES=1 go test ./services/api` rewrites the API's. A party
 has a `revision`, and clients keep the highest they've seen.
 
 Everything a person is told is one of two things:
@@ -124,7 +138,7 @@ would give their containers. The web app reads `.env` and takes port 24000.
 
 `overmind connect api` attaches to one process, `overmind restart api` restarts it, and `overmind quit`
 stops them all. The moderation worker and Discord bot aren't started by default (`.overmind.env`), since
-playing doesn't need them and the bot needs a token; `overmind start -l api,gateway,gameplay,web,moderation`
+playing doesn't need them and the bot needs a token; `overmind start -l api,gateway,matchmaker,gameplay,web,moderation`
 picks exactly which processes run.
 
 Migrations are goose files in `backend/db/migrations`. Each service that uses the database applies them

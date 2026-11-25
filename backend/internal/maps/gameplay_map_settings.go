@@ -3,15 +3,11 @@ package maps
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"geoduels/pkg/gameplay"
 	"geoduels/pkg/matchkind"
-	db "geoduels/pkg/persistence/sqlc/db"
 )
 
 // Gameplay map configuration: which map answers each mode/ruleset slot.
@@ -74,41 +70,40 @@ func decodeGameplayMapSettings(raw string) GameplaySettings {
 	})
 }
 
-func (s *PGStore) GetGameplayMapSettings() (GameplaySettings, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-	return s.gameplayMapSettings(ctx, s.pool)
+// Settings is a process's copy of the site settings (sitesettings.Copy).
+type Settings interface {
+	Value(key string) ([]byte, bool)
 }
 
-func (s *PGStore) gameplayMapSettings(ctx context.Context, q db.DBTX) (GameplaySettings, error) {
-	raw, err := db.New(q).GetGameplayMapSettings(ctx, gameplayMapSettingsKey)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return defaultGameplayMapSettings(), nil
-		}
-		return GameplaySettings{}, err
+// GetGameplayMapSettings is the gameplay map settings in the process's copy of the settings.
+func (s *PGStore) GetGameplayMapSettings() GameplaySettings {
+	raw, ok := s.settings.Value(gameplayMapSettingsKey)
+	if !ok {
+		return defaultGameplayMapSettings()
 	}
-	return decodeGameplayMapSettings(string(raw)), nil
+	return decodeGameplayMapSettings(string(raw))
 }
 
-func (s *PGStore) ResolveGameplayMapID(mode matchkind.Mode, ruleset gameplay.Ruleset, requestedMapID string) (string, error) {
-	requestedMapID = strings.TrimSpace(requestedMapID)
-	if requestedMapID != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-		id, _, err := resolveMapIdentity(ctx, s.pool, requestedMapID)
-		return id, err
-	}
-	settings, err := s.GetGameplayMapSettings()
-	if err != nil {
-		return "", err
-	}
+// RulesetMap is the map a match plays in this ruleset when it names none.
+func (g GameplaySettings) RulesetMap(ruleset gameplay.Ruleset) string {
 	switch gameplay.NormalizeRuleset(ruleset) {
 	case gameplay.RulesetNoMove:
-		return s.ResolveGameplayMapID(mode, ruleset, settings.NoMoveMapID)
+		return g.NoMoveMapID
 	case gameplay.RulesetNMPZ:
-		return s.ResolveGameplayMapID(mode, ruleset, settings.NMPZMapID)
+		return g.NMPZMapID
 	default:
-		return s.ResolveGameplayMapID(mode, ruleset, settings.MovingMapID)
+		return g.MovingMapID
 	}
+}
+
+// ResolveGameplayMapID is the id of the requested map, or of the ruleset's map when none was requested.
+func (s *PGStore) ResolveGameplayMapID(_ matchkind.Mode, ruleset gameplay.Ruleset, requestedMapID string) (string, error) {
+	requestedMapID = strings.TrimSpace(requestedMapID)
+	if requestedMapID == "" {
+		requestedMapID = s.GetGameplayMapSettings().RulesetMap(ruleset)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	id, _, err := resolveMapIdentity(ctx, s.pool, requestedMapID)
+	return id, err
 }

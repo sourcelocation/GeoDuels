@@ -12,7 +12,6 @@ import (
 	"geoduels/internal/inbox"
 	"geoduels/pkg/auth"
 	"geoduels/pkg/gameplay"
-	"geoduels/pkg/maintenance"
 )
 
 // playerBadge is a badge as clients show it.
@@ -285,18 +284,4 @@ func (a *api) createMatchReport(c echo.Context) error {
 type moderationSignalCreated struct {
 	SignalID int64  `json:"signalId"`
 	Status   string `json:"status"`
-}
-
-func maintenancePlayMessage(status maintenance.Status) string {
-	if status.Message != "" {
-		return status.Message
-	}
-	switch status.Phase {
-	case maintenance.PhaseActive:
-		return "Maintenance in progress. New matches are temporarily unavailable."
-	case maintenance.PhaseWarning:
-		return "New matches have been paused for scheduled maintenance."
-	default:
-		return "Matches are temporarily unavailable"
-	}
 }

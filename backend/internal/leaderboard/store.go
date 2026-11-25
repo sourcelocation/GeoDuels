@@ -14,9 +14,13 @@ const modeDuel = "duel"
 // PGStore owns PostgreSQL access for the leaderboard feature.
 type PGStore struct {
 	pool *pgxpool.Pool
+	// settings is the process's copy of the site settings, for the season shown when none is asked for.
+	settings storekit.Settings
 }
 
-func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{pool: pool} }
+func NewPGStore(pool *pgxpool.Pool, settings storekit.Settings) *PGStore {
+	return &PGStore{pool: pool, settings: settings}
+}
 
 func (s *PGStore) q() *db.Queries { return db.New(s.pool) }
 
@@ -34,11 +38,7 @@ func (s *PGStore) ListLeaderboard(ctx context.Context, mode, seasonID string, li
 		offset = 0
 	}
 	if seasonID == "" {
-		var err error
-		seasonID, err = s.q().GetActiveSeasonID(ctx)
-		if err != nil {
-			return nil, err
-		}
+		seasonID = storekit.CurrentSeasonID(s.settings)
 	}
 	rows, err := s.q().ListLeaderboard(ctx, db.ListLeaderboardParams{Mode: db.GdMatchMode(mode), SeasonID: seasonID, RowOffset: int32(offset), RowLimit: int32(limit)})
 	if err != nil {
@@ -66,10 +66,7 @@ func (s *PGStore) GetLeaderboardOverview(ctx context.Context, userID, mode, seas
 		return Overview{}, err
 	}
 	if seasonID == "" {
-		seasonID, err = s.q().GetActiveSeasonID(ctx)
-		if err != nil {
-			return Overview{}, err
-		}
+		seasonID = storekit.CurrentSeasonID(s.settings)
 	}
 	totals, err := s.q().GetLeaderboardTotals(ctx, db.GetLeaderboardTotalsParams{SelfUserID: userID, Mode: db.GdMatchMode(mode), SeasonID: seasonID})
 	if err != nil {
@@ -83,7 +80,7 @@ func (s *PGStore) GetLeaderboardOverview(ctx context.Context, userID, mode, seas
 func (s *PGStore) Refresh(ctx context.Context, seasonID string) (int, error) {
 	if seasonID == "" {
 		var err error
-		seasonID, err = s.q().GetActiveSeasonID(ctx)
+		seasonID, err = storekit.ActiveSeasonID(ctx, s.pool)
 		if err != nil {
 			return 0, err
 		}

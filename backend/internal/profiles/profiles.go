@@ -62,10 +62,7 @@ func (s *PGStore) GetProfile(userID string) (Profile, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
-		return p, err
-	}
+	seasonID := storekit.CurrentSeasonID(s.settings)
 	p.SeasonID = seasonID
 	row, err := s.db.GetProfile(ctx, db.GetProfileParams{
 		UserID: userID, Mode: modeDuel, SeasonID: seasonID, DefaultMmr: initialMMR, DefaultRd: initialRatingRD,
@@ -102,10 +99,7 @@ func (s *PGStore) GetPublicPlayerProfileByNickname(nickname string) (PublicPlaye
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
-		return p, err
-	}
+	seasonID := storekit.CurrentSeasonID(s.settings)
 	p.SeasonID = seasonID
 	row, err := s.db.GetPublicProfile(ctx, db.GetPublicProfileParams{DisplayName: nickname, Mode: modeDuel, SeasonID: seasonID, DefaultMmr: initialMMR, DefaultRd: initialRatingRD})
 	if err != nil {

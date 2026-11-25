@@ -20,14 +20,15 @@ import (
 type Store interface {
 	WithinTx(ctx context.Context, fn func(Store) error) error
 	LockCycle(ctx context.Context) (Cycle, error)
-	Winner(ctx context.Context, start time.Time) (Winner, bool, error)
-	TrendingMap(ctx context.Context) (Winner, bool, error)
-	SaveAward(ctx context.Context, start, now time.Time, winner Winner, source string) error
+	Winner(ctx context.Context) (Winner, bool, error)
+	NominateTrending(ctx context.Context) (bool, error)
+	RemoveNomination(ctx context.Context, id int64) error
+	SaveAward(ctx context.Context, start, now time.Time, winner Winner) error
 	AdvanceCycle(ctx context.Context, cycle Cycle, awardedAt time.Time) error
 	AwardBadge(ctx context.Context, userID, badgeID string) error
-	NominateMap(ctx context.Context, actorID, mapID string, start time.Time) error
-	SetNominationLike(ctx context.Context, actorID string, id int64, liked bool, start time.Time) error
-	ListNominations(ctx context.Context, actorID string, page int, cycle Cycle) (Page, error)
+	NominateMap(ctx context.Context, actorID, mapID string) error
+	SetNominationLike(ctx context.Context, actorID string, id int64, liked bool) error
+	ListNominations(ctx context.Context, actorID string, page int, closesAt time.Time) (Page, error)
 }
 
 type PGStore struct {
@@ -78,26 +79,31 @@ func (a *PGStore) LockCycle(ctx context.Context) (Cycle, error) {
 	return Cycle{StartsAt: row.StartsAt.Time, ClosesAt: row.ClosesAt.Time}, err
 }
 
-func (a *PGStore) Winner(ctx context.Context, start time.Time) (Winner, bool, error) {
-	row, err := a.q().MOTWWinner(ctx, stamp(start))
+func (a *PGStore) Winner(ctx context.Context) (Winner, bool, error) {
+	row, err := a.q().MOTWWinner(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Winner{}, false, nil
 	}
-	return Winner{MapID: storekit.UUIDVal(row.MapID), Name: row.DisplayName, CreatorID: storekit.UUIDVal(row.OwnerUserID), Likes: int(row.Likes)}, err == nil, err
+	return Winner{
+		NominationID: row.ID, MapID: storekit.UUIDVal(row.MapID), Name: row.DisplayName, CreatorID: storekit.UUIDVal(row.OwnerUserID),
+		Likes: int(row.Likes), FromTrending: row.FromTrending,
+	}, err == nil, err
 }
 
-func (a *PGStore) TrendingMap(ctx context.Context) (Winner, bool, error) {
-	row, err := a.q().MOTWTrendingFallback(ctx)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Winner{}, false, nil
-	}
-	return Winner{MapID: storekit.UUIDVal(row.MapID), Name: row.DisplayName, CreatorID: storekit.UUIDVal(row.OwnerUserID)}, err == nil, err
+// NominateTrending nominates the top trending map that never won, reporting whether there was one.
+func (a *PGStore) NominateTrending(ctx context.Context) (bool, error) {
+	nominated, err := a.q().NominateTrendingMOTWMap(ctx)
+	return nominated > 0, err
 }
 
-func (a *PGStore) SaveAward(ctx context.Context, start, now time.Time, winner Winner, source string) error {
+func (a *PGStore) RemoveNomination(ctx context.Context, id int64) error {
+	return a.q().DeleteMOTWNomination(ctx, id)
+}
+
+func (a *PGStore) SaveAward(ctx context.Context, start, now time.Time, winner Winner) error {
 	return a.q().InsertMOTWAward(ctx, db.InsertMOTWAwardParams{
 		CycleStart: stamp(start), SelectedAt: stamp(now), MapID: storekit.MustUUID(winner.MapID), MapName: winner.Name,
-		CreatorUserID: storekit.MustUUID(winner.CreatorID), Source: source, Likes: int32(winner.Likes),
+		CreatorUserID: storekit.MustUUID(winner.CreatorID), Source: winner.Source(), Likes: int32(winner.Likes),
 	})
 }
 
@@ -116,7 +122,7 @@ func (a *PGStore) AwardBadge(ctx context.Context, userID, badgeID string) error 
 	return err
 }
 
-func (a *PGStore) NominateMap(ctx context.Context, actorID, mapID string, start time.Time) error {
+func (a *PGStore) NominateMap(ctx context.Context, actorID, mapID string) error {
 	user, err := storekit.ProfileUUID(actorID)
 	if err != nil {
 		return err
@@ -125,21 +131,20 @@ func (a *PGStore) NominateMap(ctx context.Context, actorID, mapID string, start 
 	if err != nil {
 		return ErrUnavailable
 	}
-	_, err = a.q().NominateMOTWMap(ctx, db.NominateMOTWMapParams{CycleStart: stamp(start), ActorID: user, MapID: id})
+	_, err = a.q().NominateMOTWMap(ctx, db.NominateMOTWMapParams{ActorID: user, MapID: id})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrUnavailable
 	}
 	return err
 }
 
-func (a *PGStore) SetNominationLike(ctx context.Context, actorID string, id int64, liked bool, start time.Time) error {
+func (a *PGStore) SetNominationLike(ctx context.Context, actorID string, id int64, liked bool) error {
 	user, err := storekit.ProfileUUID(actorID)
 	if err != nil {
 		return err
 	}
 	q := a.q()
-	cycleStart := stamp(start)
-	exists, err := q.MOTWNominationExists(ctx, db.MOTWNominationExistsParams{ID: id, CycleStart: cycleStart})
+	exists, err := q.MOTWNominationExists(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -147,25 +152,24 @@ func (a *PGStore) SetNominationLike(ctx context.Context, actorID string, id int6
 		return ErrUnavailable
 	}
 	if liked {
-		return q.SetMOTWLike(ctx, db.SetMOTWLikeParams{NominationID: id, ActorID: user, CycleStart: cycleStart})
+		return q.SetMOTWLike(ctx, db.SetMOTWLikeParams{NominationID: id, ActorID: user})
 	}
 	return q.RemoveMOTWLike(ctx, db.RemoveMOTWLikeParams{NominationID: id, ActorID: user})
 }
 
-func (a *PGStore) ListNominations(ctx context.Context, actorID string, page int, cycle Cycle) (Page, error) {
-	result := Page{Items: []Nomination{}, Page: page, PageSize: 20, ClosesAt: cycle.ClosesAt}
+func (a *PGStore) ListNominations(ctx context.Context, actorID string, page int, closesAt time.Time) (Page, error) {
+	result := Page{Items: []Nomination{}, Page: page, PageSize: 20, ClosesAt: closesAt}
 	user, err := storekit.ProfileUUID(actorID)
 	if err != nil {
 		return result, err
 	}
 	q := a.q()
-	cycleStart := stamp(cycle.StartsAt)
-	count, err := q.CountMOTWNominations(ctx, cycleStart)
+	count, err := q.CountMOTWNominations(ctx)
 	if err != nil {
 		return Page{}, err
 	}
 	result.Total = int(count)
-	rows, err := q.ListMOTWNominations(ctx, db.ListMOTWNominationsParams{CycleStart: cycleStart, ActorID: user, PageSize: 20, PageOffset: int32((page - 1) * 20)})
+	rows, err := q.ListMOTWNominations(ctx, db.ListMOTWNominationsParams{ActorID: user, PageSize: 20, PageOffset: int32((page - 1) * 20)})
 	if err != nil {
 		return Page{}, err
 	}

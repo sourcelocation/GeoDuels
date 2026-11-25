@@ -14,10 +14,12 @@ import (
 type PGStore struct {
 	pool *pgxpool.Pool
 	db   *db.Queries
+	// settings is the process's copy of the site settings, for the season profiles are read in.
+	settings storekit.Settings
 }
 
-func NewPGStore(pool *pgxpool.Pool) *PGStore {
-	return &PGStore{pool: pool, db: db.New(pool)}
+func NewPGStore(pool *pgxpool.Pool, settings storekit.Settings) *PGStore {
+	return &PGStore{pool: pool, db: db.New(pool), settings: settings}
 }
 
 func (s *PGStore) withTx(ctx context.Context, fn func(pgx.Tx) error) error {

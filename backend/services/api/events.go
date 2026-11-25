@@ -156,13 +156,6 @@ type queueUpdated struct {
 
 func (queueUpdated) EventType() string { return "queue.updated" }
 
-// matchStarted tells a player they're seated in a new match.
-type matchStarted struct {
-	Match activeMatchSummary `json:"match"`
-}
-
-func (matchStarted) EventType() string { return "match.started" }
-
 // statusEvent is the online count and maintenance status.
 type statusEvent struct {
 	OnlinePlayers int                `json:"onlinePlayers"`

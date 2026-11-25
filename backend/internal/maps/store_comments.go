@@ -100,7 +100,7 @@ func (s *PGStore) CreateMapComment(userID, mapID string, input NewComment) (Comm
 	if err := db.New(tx).InsertMapComment(ctx, db.InsertMapCommentParams{CommentID: mustMapUUID(id), MapID: mustMapUUID(mapID), ParentID: parentID, UserID: mustMapUUID(userID), Body: pgtype.Text{String: body, Valid: true}}); err != nil {
 		return Comment{}, err
 	}
-	if err := incrementMapCommentStats(ctx, tx, strings.TrimSpace(mapID), strings.TrimSpace(userID)); err != nil {
+	if err := incrementMapCommentStats(ctx, tx, strings.TrimSpace(mapID)); err != nil {
 		return Comment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

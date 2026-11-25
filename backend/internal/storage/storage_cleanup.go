@@ -47,7 +47,7 @@ func (s *PGStore) CleanupStorage(n int) (StorageCleanupResult, error) {
 		rs := []struct {
 			p *int64
 			f func(context.Context, int32) (pgconn.CommandTag, error)
-		}{{&o.ExpiredReplays, q.DeleteExpiredReplays}, {&o.MatchPlans, q.DeleteMatchPlans}, {&o.MatchSessions, q.DeleteMatchSessions}, {&o.ChatMessages, q.DeleteChatMessages}, {&o.ChatConversations, q.DeleteChatConversations}, {&o.AuthSessions, q.DeleteAuthSessions}, {&o.Parties, q.DeleteParties}, {&o.MapUploadEvents, q.DeleteMapUploadEvents}, {&o.MapDailyUsers, q.DeleteMapDailyUsers}, {&o.InboxMessages, q.DeleteInboxMessages}, {&o.Leases, q.DeleteStaleLeases}, {&o.RateLimitWindows, q.DeleteRateLimitWindows}}
+		}{{&o.ExpiredReplays, q.DeleteExpiredReplays}, {&o.MatchSessions, q.DeleteMatchSessions}, {&o.ChatMessages, q.DeleteChatMessages}, {&o.ChatConversations, q.DeleteChatConversations}, {&o.AuthSessions, q.DeleteAuthSessions}, {&o.Parties, q.DeleteParties}, {&o.MapUploadEvents, q.DeleteMapUploadEvents}, {&o.InboxMessages, q.DeleteInboxMessages}, {&o.Leases, q.DeleteStaleLeases}, {&o.RateLimitWindows, q.DeleteRateLimitWindows}}
 		for _, r := range rs {
 			t, e := r.f(ctx, int32(n))
 			if e != nil {

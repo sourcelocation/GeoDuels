@@ -110,15 +110,6 @@ func (a *api) heartbeatLive(c echo.Context) error {
 		return plainTextError(c, http.StatusBadGateway, "presence unavailable")
 	}
 	a.wentOffline(ctx, gone)
-	users := make([]string, 0, len(req.Connections))
-	for _, connection := range req.Connections {
-		if connection.UserID != "" {
-			users = append(users, connection.UserID)
-		}
-	}
-	if err := a.queue.TouchAll(ctx, users); err != nil {
-		observability.Log("warn", "queue touch failed", map[string]any{"error": err.Error()})
-	}
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -187,9 +178,6 @@ func (a *api) wentOffline(ctx context.Context, userIDs []string) {
 		}
 		if err := profiles.TouchLastSeen(ctx, a.db.Pool(), userID, now); err != nil {
 			observability.Log("warn", "last seen update failed", map[string]any{"userId": userID, "error": err.Error()})
-		}
-		if err := a.queue.Leave(ctx, userID); err != nil {
-			observability.Log("warn", "queue leave failed", map[string]any{"userId": userID, "error": err.Error()})
 		}
 		a.tellPresenceChanged(ctx, userID)
 	}

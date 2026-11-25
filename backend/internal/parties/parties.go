@@ -306,19 +306,6 @@ func (s *PGStore) TouchOpenParty(ctx context.Context, partyID string) error {
 	return s.q().TouchOpenParty(ctx, id)
 }
 
-// MarkMatchStartedTx makes the match the party's current one and clears its members' ready flags, in
-// the transaction that starts the match. The party is in the match for as long as the match is live.
-func MarkMatchStartedTx(ctx context.Context, tx pgx.Tx, partyID, matchID string) error {
-	partyUUID, matchUUID, err := profileUUID2(partyID, matchID)
-	if err != nil {
-		return err
-	}
-	if _, err := db.New(tx).MarkPartyMatchStarted(ctx, db.MarkPartyMatchStartedParams{ID: partyUUID, LastMatchID: matchUUID}); err != nil {
-		return err
-	}
-	return nil
-}
-
 // NextRevision is taken before reading a party to send it, so a higher revision never carries older state.
 func (s *PGStore) NextRevision(ctx context.Context, partyID string) (int64, error) {
 	id, err := profileUUID(partyID)
