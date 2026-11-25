@@ -50,9 +50,8 @@ export type AppBootstrapPayload = {
   viewer: BootstrapViewer | null;
   preferences: { revision: number; value: unknown } | null;
   client: {
-    googleClientId: string;
-    discordClientId: string;
-    turnstileSiteKey: string;
+    /** The sign-in providers the server can start. */
+    authProviders: string[];
     googleEmbedKey: string;
   };
   global: {
@@ -80,19 +79,26 @@ export async function requestBootstrap(): Promise<AppBootstrapPayload> {
   return resp.json();
 }
 
-export async function requestGuestSession(
-  turnstileToken?: string,
-): Promise<AuthSessionPayload> {
-  const resp = await apiFetch("/api/auth/guest", {
+/** Shows the Turnstile widget for the site key and resolves with its token. */
+export type GuestVerification = (siteKey: string) => Promise<string>;
+
+function postGuestSession(turnstileToken?: string) {
+  return apiFetch("/api/auth/guest", {
     method: "POST",
     credentials: "include",
-    headers: turnstileToken
-      ? { "Content-Type": "application/json" }
-      : undefined,
-    body: turnstileToken
-      ? JSON.stringify({ turnstileToken })
-      : undefined,
+    headers: turnstileToken ? { "Content-Type": "application/json" } : undefined,
+    body: turnstileToken ? JSON.stringify({ turnstileToken }) : undefined,
   });
+}
+
+/** Signs up a guest. Past its address's signup limit the server asks for a check (428), passed once. */
+export async function requestGuestSession(verify: GuestVerification): Promise<AuthSessionPayload> {
+  let resp = await postGuestSession();
+  if (resp.status === 428) {
+    const { turnstileSiteKey } = (await resp.json()) as { turnstileSiteKey: string };
+    resp = await postGuestSession(await verify(turnstileSiteKey));
+    if (resp.status === 428) throw new Error("Verification failed. Try again.");
+  }
   if (!resp.ok) {
     throw new Error(await readError(resp, "Guest login failed"));
   }

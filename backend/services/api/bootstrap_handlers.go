@@ -21,12 +21,14 @@ type bootstrapResponse struct {
 	Global      bootstrapGlobal       `json:"global"`
 }
 
-// bootstrapClient is what the browser needs to start third-party flows. All of it is public.
+// bootstrapClient is what the browser needs from the server's configuration. All of it is public.
 type bootstrapClient struct {
-	GoogleClientID   string `json:"googleClientId"`
-	DiscordClientID  string `json:"discordClientId"`
-	TurnstileSiteKey string `json:"turnstileSiteKey"`
-	GoogleEmbedKey   string `json:"googleEmbedKey"`
+	// AuthProviders are the sign-in providers configured; the server builds their sign-in URLs.
+	AuthProviders []string `json:"authProviders"`
+	// Deprecated: pages built before authProviders read these; drop them in the next release.
+	GoogleClientID  string `json:"googleClientId"`
+	DiscordClientID string `json:"discordClientId"`
+	GoogleEmbedKey  string `json:"googleEmbedKey"`
 }
 
 type bootstrapViewer struct {
@@ -66,8 +68,9 @@ func (a *api) bootstrap(c echo.Context) error {
 	global := a.status.current()
 	response := bootstrapResponse{
 		Client: bootstrapClient{
+			AuthProviders:  a.authProviders(),
 			GoogleClientID: a.googleClientID, DiscordClientID: a.discordClientID,
-			TurnstileSiteKey: a.turnstileSiteKey, GoogleEmbedKey: a.googleEmbedKey,
+			GoogleEmbedKey: a.googleEmbedKey,
 		},
 		Global: bootstrapGlobal{
 			OnlinePlayers: global.OnlinePlayers,
@@ -113,6 +116,18 @@ func (a *api) bootstrap(c echo.Context) error {
 		}
 	}
 	return writeJSON(c, response)
+}
+
+// authProviders lists the sign-in providers the server can start.
+func (a *api) authProviders() []string {
+	providers := []string{}
+	if a.googleOAuthEnabled() {
+		providers = append(providers, "google")
+	}
+	if a.discordOAuthEnabled() {
+		providers = append(providers, "discord")
+	}
+	return providers
 }
 
 func (a *api) issueReadOnlyAuthSessionPayload(identity Identity, sessionID string) (authSessionPayload, error) {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 )
@@ -92,4 +93,18 @@ func remoteAddrIP(remoteAddr string) string {
 		return ip.String()
 	}
 	return ""
+}
+
+// rateLimitSubject is who a per-address limit counts. One IPv6 subscriber holds a whole /64 and can
+// rotate through it, so that /64 is the subject.
+func rateLimitSubject(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return "unknown"
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	return netip.PrefixFrom(addr, 64).Masked().String()
 }

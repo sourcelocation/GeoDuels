@@ -62,21 +62,22 @@ func (a *api) guestLogin(c echo.Context) error {
 	if err := decodeJSONBody(r, &req); err != nil {
 		return plainTextError(c, http.StatusBadRequest, "invalid payload")
 	}
-	if banned, err := a.moderation.IsSignupIPBanned(r.Context(), a.clientIP(r)); err != nil {
+	ip := a.clientIP(r)
+	if banned, err := a.moderation.IsSignupIPBanned(r.Context(), ip); err != nil {
 		return plainTextError(c, http.StatusInternalServerError, "signup unavailable (101)")
 	} else if banned {
 		return plainTextError(c, http.StatusForbidden, "signup unavailable (102)")
 	}
-	if ok, retryAfter, err := a.checkGuestSignupRateLimit(r); err != nil {
+	allowed, retryAfter, err := a.hitGuestSignupLimit(r.Context(), ip)
+	if err != nil {
 		return plainTextError(c, http.StatusInternalServerError, "signup unavailable (103)")
-	} else if !ok {
-		return writeRateLimited(c, retryAfter)
 	}
-	if err := a.verifyGuestTurnstile(r.Context(), req.TurnstileToken, a.clientIP(r)); err != nil {
-		if errors.Is(err, errTurnstileRejected) {
-			return plainTextError(c, http.StatusForbidden, "verification failed")
+	if !allowed {
+		if err := a.guestChallenge.verify(r.Context(), req.TurnstileToken, ip); errors.Is(err, errGuestChallengeFailed) {
+			return a.guestChallenge.refuse(c, retryAfter)
+		} else if err != nil {
+			return plainTextError(c, http.StatusServiceUnavailable, "verification unavailable")
 		}
-		return plainTextError(c, http.StatusServiceUnavailable, "verification unavailable")
 	}
 	identity, err := a.accounts.CreateGuestIdentity()
 	if err != nil {

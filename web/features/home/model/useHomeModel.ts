@@ -140,11 +140,7 @@ export function useHomeModel(options?: {
       requestSupportDonation(accessToken),
   });
 
-  const requestGuestVerificationToken = useCallback((): Promise<string> => {
-    const siteKey = authGateway.getClientKeys().turnstileSiteKey;
-    if (!siteKey) {
-      return Promise.resolve("");
-    }
+  const requestGuestVerificationToken = useCallback((siteKey: string): Promise<string> => {
     guestVerificationResolverRef.current?.reject(
       new Error("Guest verification restarted."),
     );
@@ -215,15 +211,11 @@ export function useHomeModel(options?: {
       return nextSession;
     } catch (error) {
       const message = getErrorMessage(error, "Guest login failed");
-      if (authGateway.getClientKeys().turnstileSiteKey) {
-        setGuestVerification((current) => ({
-          ...current,
-          open: false,
-          status: "error",
-          error: message,
-          resetKey: current.resetKey + 1,
-        }));
-      }
+      setGuestVerification((current) =>
+        current.open
+          ? { ...current, open: false, status: "error", error: message, resetKey: current.resetKey + 1 }
+          : current,
+      );
       sessionController.setAuthPending({
         authLoading: false,
         authError: message,
