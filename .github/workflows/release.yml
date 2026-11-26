@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     branches: [master]
+  # Shows the images a release would publish, so a change to them is checked before it ships.
+  pull_request:
+    paths: [.github/workflows/release.yml, docker-bake.hcl]
 
 concurrency:
   group: release
@@ -11,6 +14,7 @@ concurrency:
 jobs:
   release-please:
     name: Release pull request
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -76,19 +80,42 @@ jobs:
             *.labels.org.opencontainers.image.version=${{ needs.release-please.outputs.tag }}
             *.labels.org.opencontainers.image.revision=${{ needs.release-please.outputs.sha }}
 
-  publish:
-    name: Publish
-    needs: [release-please, images]
+  # One entry per image, named by the bake file with the release's tag.
+  targets:
+    name: Images to publish
+    needs: release-please
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || needs.release-please.outputs.created == 'true') }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      packages: write
-    env:
-      TAG: ${{ needs.release-please.outputs.tag }}
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release-please.outputs.sha }}
+          ref: ${{ needs.release-please.outputs.sha || github.sha }}
+      - id: matrix
+        uses: docker/bake-action/subaction/matrix@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        env:
+          TAG: ${{ needs.release-please.outputs.tag || 'v0.0.0' }}
+        with:
+          files: docker-bake.hcl
+          fields: tags
+      - name: Show them
+        env:
+          MATRIX: ${{ steps.matrix.outputs.matrix }}
+        run: echo "$MATRIX"
+
+  join:
+    name: Join ${{ matrix.target }}
+    needs: [targets, images]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    steps:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -96,13 +123,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Join the architectures under the version's tag
-        run: |
-          set -euo pipefail
-          for image in $(docker buildx bake --file docker-bake.hcl --print | jq -r '.target[].tags[] | sub(":dev$"; "")'); do
-            docker buildx imagetools create -t "$image:$TAG" "$image:$TAG-amd64" "$image:$TAG-arm64"
-          done
-      # The drafted release goes public only once its images exist.
+        env:
+          REF: ${{ matrix.tags }}
+        run: docker buildx imagetools create -t "$REF" "$REF-amd64" "$REF-arm64"
+
+  # The drafted release goes public only once all its images exist.
+  publish:
+    name: Publish
+    needs: [release-please, join]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
