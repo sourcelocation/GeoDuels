@@ -158,7 +158,7 @@ func newAPI() (*api, error) {
 	go settings.Run(context.Background())
 	mapsStore := maps.NewPGStore(pool, settings)
 	workers := river.NewWorkers()
-	jobsClient, err := jobs.NewClient(pool, jobs.QueueLive, workers, nil)
+	jobsClient, err := jobs.NewClient(pool, jobs.QueueLive, workers)
 	if err != nil {
 		store.Close()
 		return nil, err

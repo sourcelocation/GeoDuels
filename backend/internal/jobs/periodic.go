@@ -5,12 +5,17 @@ import (
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+
+	"geoduels/internal/envcfg"
 )
 
-// PeriodicJobs returns the maintenance schedule. Each job is unique until it
-// finishes so multiple worker replicas cannot double-run it. River requires the
-// unique states to include available, pending, running and scheduled.
-func PeriodicJobs(cfg PeriodicConfig) []*river.PeriodicJob {
+// periodicJobs is the maintenance schedule. River enqueues periodic jobs only on its elected leader,
+// and any process with a worker client can win that election, so every worker client carries the
+// same schedule; the intervals come from the configuration all services share. The jobs go to the
+// default queue, which only the moderation worker works. Each job is unique until it finishes, so
+// a change of leader cannot double-run it. River requires the unique states to include available,
+// pending, running and scheduled.
+func periodicJobs() []*river.PeriodicJob {
 	unique := &river.InsertOpts{UniqueOpts: river.UniqueOpts{
 		ByArgs: true,
 		ByState: []rivertype.JobState{
@@ -18,27 +23,25 @@ func PeriodicJobs(cfg PeriodicConfig) []*river.PeriodicJob {
 			rivertype.JobStateRunning, rivertype.JobStateScheduled,
 		},
 	}}
-	opts := func(id string) *river.PeriodicJobOpts {
-		return &river.PeriodicJobOpts{ID: id, RunOnStart: false}
-	}
-	every := func(d, fallback time.Duration) time.Duration {
-		if d <= 0 {
-			return fallback
-		}
-		return d
+	every := func(d time.Duration, id string, args river.JobArgs) *river.PeriodicJob {
+		return river.NewPeriodicJob(river.PeriodicInterval(d),
+			func() (river.JobArgs, *river.InsertOpts) { return args, unique },
+			&river.PeriodicJobOpts{ID: id, RunOnStart: false})
 	}
 	return []*river.PeriodicJob{
-		river.NewPeriodicJob(river.PeriodicInterval(every(cfg.GuestCleanupInterval, time.Hour)),
-			func() (river.JobArgs, *river.InsertOpts) { return GuestCleanupArgs{}, unique }, opts("guest_cleanup")),
-		river.NewPeriodicJob(river.PeriodicInterval(every(cfg.StorageCleanupInterval, time.Hour)),
-			func() (river.JobArgs, *river.InsertOpts) { return StorageCleanupArgs{}, unique }, opts("storage_cleanup")),
-		river.NewPeriodicJob(river.PeriodicInterval(every(cfg.SeasonResetInterval, time.Minute)),
-			func() (river.JobArgs, *river.InsertOpts) { return SeasonResetArgs{}, unique }, opts("season_reset")),
-		river.NewPeriodicJob(river.PeriodicInterval(every(cfg.CurationInterval, time.Minute)),
-			func() (river.JobArgs, *river.InsertOpts) { return CurationSweepArgs{}, unique }, opts("curation_sweep")),
-		river.NewPeriodicJob(river.PeriodicInterval(every(cfg.LeaderboardInterval, time.Minute)),
-			func() (river.JobArgs, *river.InsertOpts) { return LeaderboardRefreshArgs{}, unique }, opts("leaderboard_refresh")),
-		river.NewPeriodicJob(river.PeriodicInterval(every(cfg.MapStatsInterval, 5*time.Minute)),
-			func() (river.JobArgs, *river.InsertOpts) { return MapStatsArgs{}, unique }, opts("map_stats")),
+		every(interval("GUEST_ACCOUNT_CLEANUP_INTERVAL", time.Hour), "guest_cleanup", GuestCleanupArgs{}),
+		every(interval("STORAGE_CLEANUP_INTERVAL", time.Hour), "storage_cleanup", StorageCleanupArgs{}),
+		every(time.Minute, "season_reset", SeasonResetArgs{}),
+		every(time.Minute, "curation_sweep", CurationSweepArgs{}),
+		every(time.Minute, "leaderboard_refresh", LeaderboardRefreshArgs{}),
+		every(interval("MAP_STATS_INTERVAL", 5*time.Minute), "map_stats", MapStatsArgs{}),
 	}
+}
+
+// interval reads a configured interval, keeping the fallback for one that isn't positive.
+func interval(key string, fallback time.Duration) time.Duration {
+	if d := envcfg.Duration(key, fallback); d > 0 {
+		return d
+	}
+	return fallback
 }
