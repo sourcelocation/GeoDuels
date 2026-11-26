@@ -24,3 +24,16 @@ SET display_name = $2,
     nickname_claimed_at = coalesce(nickname_claimed_at, now())
 WHERE id = $1
   AND gd_is_registered(users.id);
+
+-- name: ListPlayers :many
+-- Who may play: the name and avatar their seat shows, and anything that keeps them from playing.
+SELECT u.id AS user_id, gd_display_name(u.display_name, ui.provider_name, u.id) AS display_name,
+       coalesce(u.avatar_url, ui.avatar_url, '') AS avatar_url,
+       coalesce(gd_is_registered(u.id) AND u.nickname_claimed_at IS NULL, false)::boolean AS needs_nickname,
+       gd_is_registered(u.id)::boolean AS registered, gd_is_banned(u.id)::boolean AS banned
+FROM users u
+LEFT JOIN LATERAL (
+    SELECT provider_name, avatar_url FROM user_identities WHERE user_id = u.id AND provider IN ('discord', 'google')
+    ORDER BY CASE provider WHEN 'discord' THEN 0 WHEN 'google' THEN 1 ELSE 2 END, created_at ASC LIMIT 1
+) ui ON true
+WHERE u.id = ANY(sqlc.arg(user_ids)::uuid[]);

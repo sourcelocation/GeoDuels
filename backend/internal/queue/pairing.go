@@ -1,88 +1,104 @@
 package queue
 
 import (
-	"sort"
+	"math"
+	"math/rand"
+	"slices"
 	"time"
+
+	"geoduels/internal/rating"
 )
 
-// The rating window two players must fall within: 150 to start, widening by 75 for every two
-// seconds the longer-waiting of them has waited, up to 500. Both must have waited a second, so a
-// pairing never forms before either has seen they are queued.
+// Two players can meet when their ratings are within a window: 150 to start, widening by 37.5 for
+// every second the longer-waiting of them has waited, without limit, so nobody waits forever. A
+// rating that is still uncertain (a high deviation, mostly a new player's) is a guess, so the more
+// uncertain of the two widens the window by how far their deviation is above a settled player's.
+// Two players who just played each other wait rematchAfter before they meet again.
 const (
-	baseWindow      = 150
-	widenEvery      = 2 * time.Second
-	widenStep       = 75
-	maxWindow       = 500
-	minMutualWait   = 1 * time.Second
-	pairsPerVariant = 50
+	baseWindow     = 150.0
+	widenPerSecond = 37.5
+	rematchAfter   = 15 * time.Second
 )
 
-// Pair is two players who will play each other in a variant. First waited longer.
+// Pair is two players who will play each other in a queue. First waited longer.
 type Pair struct {
-	Variant Variant
-	First   Ticket
-	Second  Ticket
+	Queue  string
+	First  Ticket
+	Second Ticket
 }
 
-// Pairings decides who plays whom among the waiting tickets. Variants are matched in the order of
-// Ranked, and within one the longest-waiting player first, against the closest rating in their
-// window. A player paired in one variant is out of all of them.
-func Pairings(tickets []Ticket, now time.Time) []Pair {
-	byVariant := map[Variant][]Ticket{}
-	for _, ticket := range tickets {
-		byVariant[ticket.Variant] = append(byVariant[ticket.Variant], ticket)
-	}
-	for _, waiting := range byVariant {
-		sort.SliceStable(waiting, func(i, j int) bool {
-			if !waiting[i].JoinedAt.Equal(waiting[j].JoinedAt) {
-				return waiting[i].JoinedAt.Before(waiting[j].JoinedAt)
-			}
-			return waiting[i].UserID < waiting[j].UserID
-		})
-	}
+// Pairings decides who plays whom among the waiting tickets. The longest-waiting player picks first:
+// the closest rating among the players who share one of their queues and can meet them, the
+// longer-waiting on a tie. They play one of the queues they share, chosen at random.
+func Pairings(tickets []Ticket, now time.Time, rng *rand.Rand) []Pair {
+	waiting := slices.Clone(tickets)
+	slices.SortStableFunc(waiting, func(a, b Ticket) int {
+		if c := a.JoinedAt.Compare(b.JoinedAt); c != 0 {
+			return c
+		}
+		if a.UserID < b.UserID {
+			return -1
+		}
+		if a.UserID > b.UserID {
+			return 1
+		}
+		return 0
+	})
 	paired := map[string]bool{}
 	var pairs []Pair
-	for _, variant := range Ranked {
-		waiting := byVariant[variant]
-		matched := 0
-		for _, self := range waiting {
-			if matched >= pairsPerVariant {
-				break
-			}
-			if paired[self.UserID] || now.Sub(self.JoinedAt) < minMutualWait {
-				continue
-			}
-			best, bestDiff := -1, maxWindow+1
-			for i, other := range waiting {
-				if other.UserID == self.UserID || paired[other.UserID] || now.Sub(other.JoinedAt) < minMutualWait {
-					continue
-				}
-				diff := abs(other.MMR - self.MMR)
-				if diff <= window(self, other, now) && diff < bestDiff {
-					best, bestDiff = i, diff
-				}
-			}
-			if best < 0 {
-				continue
-			}
-			paired[self.UserID], paired[waiting[best].UserID] = true, true
-			pairs = append(pairs, Pair{Variant: variant, First: self, Second: waiting[best]})
-			matched++
+	for i, self := range waiting {
+		if paired[self.UserID] {
+			continue
 		}
+		best, bestDiff := -1, math.Inf(1)
+		for j, other := range waiting {
+			if j == i || paired[other.UserID] || !canMeet(self, other, now) {
+				continue
+			}
+			if diff := math.Abs(float64(self.MMR - other.MMR)); diff < bestDiff {
+				best, bestDiff = j, diff
+			}
+		}
+		if best < 0 {
+			continue
+		}
+		other := waiting[best]
+		paired[self.UserID], paired[other.UserID] = true, true
+		shared := sharedQueues(self, other)
+		pairs = append(pairs, Pair{Queue: shared[rng.Intn(len(shared))], First: self, Second: other})
 	}
 	return pairs
 }
 
-// window is the rating difference two players may have, from the longer of their waits.
-func window(a, b Ticket, now time.Time) int {
-	wait := max(now.Sub(a.JoinedAt), now.Sub(b.JoinedAt), 0)
-	allowed := baseWindow + int(wait/widenEvery)*widenStep
-	return min(allowed, maxWindow)
+// canMeet reports whether two waiting players may play each other now.
+func canMeet(a, b Ticket, now time.Time) bool {
+	if a.UserID == b.UserID || len(sharedQueues(a, b)) == 0 {
+		return false
+	}
+	if math.Abs(float64(a.MMR-b.MMR)) > window(a, b, now) {
+		return false
+	}
+	justPlayed := a.LastOpponentID == b.UserID || b.LastOpponentID == a.UserID
+	return !justPlayed || min(waited(a, now), waited(b, now)) >= rematchAfter
 }
 
-func abs(v int) int {
-	if v < 0 {
-		return -v
+// window is how far apart two players' ratings may be.
+func window(a, b Ticket, now time.Time) float64 {
+	uncertainty := max(max(a.RD, b.RD)-rating.MinimumRatingRD, 0)
+	return baseWindow + uncertainty + max(waited(a, now), waited(b, now)).Seconds()*widenPerSecond
+}
+
+func waited(t Ticket, now time.Time) time.Duration {
+	return max(now.Sub(t.JoinedAt), 0)
+}
+
+// sharedQueues is the queues both players wait in, in a's order.
+func sharedQueues(a, b Ticket) []string {
+	var out []string
+	for _, q := range a.Queues {
+		if slices.Contains(b.Queues, q) {
+			out = append(out, q)
+		}
 	}
-	return v
+	return out
 }

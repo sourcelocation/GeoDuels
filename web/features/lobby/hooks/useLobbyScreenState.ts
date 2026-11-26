@@ -18,6 +18,8 @@ import { useExtensionAvailability } from "../../browser-extension/hooks/use-exte
 import { useAuthActions, useAuthState } from "../../auth/components/AuthProvider";
 import { usePartyPanelState } from "./usePartyPanelState";
 import { usePlayPreferences } from "./usePlayPreferences";
+import { chosenQueues, useRankedQueues } from "../../matchmaking/hooks/use-ranked-queues";
+import { needsExtension } from "../../matchmaking/lib/queue-client";
 import type { LobbyModal } from "../components/LobbyScreenModals";
 
 export type LobbyPartyView = {
@@ -77,7 +79,9 @@ export function useLobbyScreenState({
   const authState = useAuthState();
   const extensionStatus = useExtensionAvailability();
   const extensionAvailable = extensionStatus.state === "ready";
-  const { duel, setDuel, singleplayer, setSingleplayer } = usePlayPreferences();
+  const { duel: savedDuel, setDuel, singleplayer, setSingleplayer } = usePlayPreferences();
+  const rankedQueues = useRankedQueues();
+  const duel = { queues: chosenQueues(savedDuel.queues, rankedQueues) };
   const [inviteCopied, setInviteCopied] = useState(false);
   const [inviteCodeInput, setInviteCodeInput] = useState("");
   const [mapPickerOpen, setMapPickerOpen] = useState(false);
@@ -156,7 +160,9 @@ export function useLobbyScreenState({
     else openSignIn();
   };
   const startDuelQueue = () => {
-    if (!extensionAvailable && duel.queues.includes("no_move_hidden")) return;
+    if (!duel.queues.length) return;
+    const locked = rankedQueues.some((queue) => duel.queues.includes(queue.id) && needsExtension(queue.config));
+    if (!extensionAvailable && locked) return;
     setOpenModal(null);
     joinQueue(duel.queues);
   };

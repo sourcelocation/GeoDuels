@@ -52,9 +52,6 @@ func (s *PGStore) UpsertUser(userID, email, displayName string) error {
 	if err := q.EnsureUserStats(ctx, id); err != nil {
 		return err
 	}
-	if err := q.EnsureRankedStats(ctx, db.EnsureRankedStatsParams{UserID: id, Mode: modeDuel, SeasonID: seasonID}); err != nil {
-		return err
-	}
 	return tx.Commit(ctx)
 }
 
@@ -65,10 +62,7 @@ func (s *PGStore) GetProfile(userID string) (Profile, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
-		return p, err
-	}
+	seasonID := storekit.CurrentSeasonID(s.settings)
 	p.SeasonID = seasonID
 	row, err := s.db.GetProfile(ctx, db.GetProfileParams{
 		UserID: userID, Mode: modeDuel, SeasonID: seasonID, DefaultMmr: initialMMR, DefaultRd: initialRatingRD,
@@ -81,7 +75,7 @@ func (s *PGStore) GetProfile(userID string) (Profile, error) {
 	}
 	var selectedBadgeCode int16
 	p.DisplayName, p.AvatarURL, p.MMR, p.RatingRD = row.DisplayName.String, row.AvatarUrl, int(row.Mmr), row.RatingRd
-	p.GamesPlayed, p.Wins, p.RankedGamesPlayed, p.RankedWins = int(row.GamesPlayed.(int32)), int(row.Wins.(int32)), int(row.RankedGamesPlayed), int(row.RankedWins)
+	p.GamesPlayed, p.Wins, p.RankedGamesPlayed, p.RankedWins = int(row.GamesPlayed), int(row.Wins), int(row.RankedGamesPlayed), int(row.RankedWins)
 	p.IsGuest, p.IsAdmin, p.IsModerator, p.IsBanned, p.BanReason = row.IsGuest.Bool, row.IsAdmin, row.IsModerator, row.IsBanned, row.BanReason
 	selectedBadgeCode = row.SelectedBadgeCode
 	badges, selected, err := s.profileBadges(ctx, userID, badgekit.IDFromCode(selectedBadgeCode))
@@ -105,57 +99,17 @@ func (s *PGStore) GetPublicPlayerProfileByNickname(nickname string) (PublicPlaye
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
-		return p, err
-	}
+	seasonID := storekit.CurrentSeasonID(s.settings)
 	p.SeasonID = seasonID
-	var selectedBadgeCode int16
-	err = func() error {
-		row, e := s.db.GetPublicProfile(ctx, db.GetPublicProfileParams{DisplayName: nickname, Mode: modeDuel, SeasonID: seasonID, DefaultMmr: initialMMR, DefaultRd: initialRatingRD})
-		if e != nil {
-			return e
-		}
-		p.UserID, p.DisplayName, p.AvatarURL, p.MMR, p.RatingRD, p.GamesPlayed, p.Wins, p.RankedGamesPlayed, p.RankedWins, selectedBadgeCode = storekit.UUIDVal(row.UserID), row.DisplayName, row.AvatarUrl, int(row.Mmr), row.RatingRd, int(row.GamesPlayed), int(row.Wins), int(row.RankedGamesPlayed), int(row.RankedWins), row.SelectedBadgeCode
-		return nil
-	}()
+	row, err := s.db.GetPublicProfile(ctx, db.GetPublicProfileParams{DisplayName: nickname, Mode: modeDuel, SeasonID: seasonID, DefaultMmr: initialMMR, DefaultRd: initialRatingRD})
 	if err != nil {
 		return p, err
 	}
-	settings, err := seasons.RankedSeasonSettingsTx(ctx, s.pool)
-	if err != nil {
-		return p, err
-	}
-	var seasonStartedAt any
-	if settings.LastResetAt != nil {
-		seasonStartedAt = *settings.LastResetAt
-	}
-	id, e := profileUUID(p.UserID)
-	if e != nil {
-		return p, e
-	}
-	standings, e := s.db.GetLeaderboardTotals(ctx, db.GetLeaderboardTotalsParams{
-		SelfUserID: p.UserID,
-		Mode:       modeDuel,
-		SeasonID:   seasonID,
-	})
-	if e != nil {
-		return p, e
-	}
-	streak, e := s.db.GetBestWinStreak(ctx, db.GetBestWinStreakParams{UserID: id, Since: profileTimestamptz(seasonStartedAt)})
-	if e != nil {
-		return p, e
-	}
-	perfect, e := s.db.GetPerfectGuesses(ctx, id)
-	if e != nil {
-		return p, e
-	}
-	flawless, e := s.db.GetFlawlessWins(ctx, id)
-	if e != nil {
-		return p, e
-	}
-	p.LeaderboardRank, p.LeaderboardTotal, p.BestWinStreak, p.PerfectGuesses, p.FlawlessWins = int(standings.SelfRank), int(standings.TotalPlayers), int(streak), int(perfect), int(flawless)
-	badges, selected, err := s.profileBadges(ctx, p.UserID, badgekit.IDFromCode(selectedBadgeCode))
+	p.UserID, p.DisplayName, p.AvatarURL, p.MMR, p.RatingRD = storekit.UUIDVal(row.UserID), row.DisplayName, row.AvatarUrl, int(row.Mmr), row.RatingRd
+	p.GamesPlayed, p.Wins, p.FlawlessWins, p.PerfectGuesses = int(row.GamesPlayed), int(row.Wins), int(row.FlawlessWins), int(row.PerfectGuesses)
+	p.RankedGamesPlayed, p.RankedWins, p.BestWinStreak = int(row.RankedGamesPlayed), int(row.RankedWins), int(row.BestWinStreak)
+	p.LeaderboardRank, p.LeaderboardTotal = int(row.LeaderboardRank), int(row.LeaderboardTotal)
+	badges, selected, err := s.profileBadges(ctx, p.UserID, badgekit.IDFromCode(row.SelectedBadgeCode))
 	if err != nil {
 		return p, err
 	}

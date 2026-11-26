@@ -25,10 +25,12 @@ type PGStore struct {
 	pool   *pgxpool.Pool
 	tx     pgx.Tx
 	teller jobs.Teller
+	// settings is the process's copy of the site settings, for the season players are shown in.
+	settings storekit.Settings
 }
 
-func NewPGStore(pool *pgxpool.Pool, teller jobs.Teller) *PGStore {
-	return &PGStore{pool: pool, teller: teller}
+func NewPGStore(pool *pgxpool.Pool, teller jobs.Teller, settings storekit.Settings) *PGStore {
+	return &PGStore{pool: pool, teller: teller, settings: settings}
 }
 
 // q selects the transaction when present and the pool otherwise.
@@ -130,10 +132,7 @@ func (s *PGStore) ListFriends(ctx context.Context, userID string, limit int) ([]
 	if err != nil {
 		return nil, err
 	}
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
-		return nil, err
-	}
+	seasonID := storekit.CurrentSeasonID(s.settings)
 	rows, err := s.q().ListFriends(ctx, db.ListFriendsParams{UserIDLow: id, SeasonID: seasonID, RowLimit: int32(limit)})
 	if err != nil {
 		return nil, err
@@ -157,10 +156,7 @@ func (s *PGStore) ListFriendRequests(ctx context.Context, userID, direction stri
 	if err != nil {
 		return nil, err
 	}
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
-		return nil, err
-	}
+	seasonID := storekit.CurrentSeasonID(s.settings)
 	q := s.q()
 	out := []FriendRequest{}
 	if direction == "outgoing" {
@@ -205,10 +201,7 @@ func (s *PGStore) SearchSocialPlayers(ctx context.Context, userID, query string,
 	if err != nil {
 		return nil, err
 	}
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
-		return nil, err
-	}
+	seasonID := storekit.CurrentSeasonID(s.settings)
 	rows, err := s.q().SearchSocialPlayers(ctx, db.SearchSocialPlayersParams{SeasonID: seasonID, SelfUserID: id, Query: query, RowLimit: int32(limit)})
 	if err != nil {
 		return nil, err
@@ -232,10 +225,7 @@ func (s *PGStore) ListRecentPlayers(ctx context.Context, userID string, limit in
 	if err != nil {
 		return nil, err
 	}
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
-		return nil, err
-	}
+	seasonID := storekit.CurrentSeasonID(s.settings)
 	rows, err := s.q().ListRecentPlayers(ctx, db.ListRecentPlayersParams{SeasonID: seasonID, SelfUserID: id, RowLimit: int32(limit)})
 	if err != nil {
 		return nil, err
@@ -482,10 +472,7 @@ func (s *PGStore) ResolveFriendCode(ctx context.Context, userID, code string) (C
 	if err != nil {
 		return CompactPlayer{}, ErrNotFound
 	}
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
-		return CompactPlayer{}, ErrNotFound
-	}
+	seasonID := storekit.CurrentSeasonID(s.settings)
 	row, err := s.q().ResolveFriendCode(ctx, db.ResolveFriendCodeParams{SeasonID: seasonID, Code: code, SelfUserID: userUUID})
 	if err != nil {
 		return CompactPlayer{}, ErrNotFound

@@ -26,7 +26,7 @@ var queryOwners = map[string]string{
 	"account_deletion.sql": "accounts", "account_readers.sql": "accounts", "account_writes.sql": "accounts",
 	"audit.sql": "audit", "auth_sessions.sql": "authsession", "badges.sql": "badges", "chat.sql": "chat",
 	"content.sql": "content", "controlplane.sql": "controlplane", "curation.sql": "curation", "leaderboard.sql": "leaderboard",
-	"map_comments.sql": "maps", "map_identity.sql": "maps", "map_ingest.sql": "maps", "map_match_plans.sql": "maps",
+	"map_comments.sql": "maps", "map_identity.sql": "maps", "map_ingest.sql": "maps", "map_rounds.sql": "maps",
 	"map_revisions.sql": "maps", "map_settings.sql": "maps", "map_stats.sql": "maps", "map_trust.sql": "maps", "maps.sql": "maps",
 	"match_readers.sql": "matches", "match_sessions.sql": "matches", "match_writes.sql": "matches",
 	"moderation_enforcement.sql": "moderation", "moderation_review.sql": "moderation", "moderation_v2.sql": "moderation", "warnings.sql": "moderation",
@@ -42,12 +42,11 @@ var infrastructure = []string{"envcfg", "httpx", "jobs", "rating", "storekit"}
 // queryExceptions are calls into another module's queries that predate this
 // check. Remove entries as they are fixed; do not add new ones.
 var queryExceptions = map[string][]string{
-	"accounts": {"BanUserOAuthIdentities", "EnsureRankedStats", "EnsureUserRank", "EnsureUserStats", "GetStaffRoles", "UpsertUser"},
+	"accounts": {"BanUserOAuthIdentities", "EnsureUserRank", "EnsureUserStats", "GetStaffRoles", "UpsertUser"},
 	"jobs":     {"ListDiscordIdentities"},
-	"maps":     {"GetProfile", "ListMapCountryStats"},
-	"profiles": {"GetLeaderboardTotals"},
+	"maps":     {"ListMapCountryStats"},
 	"seasons": {"EnsureRankedSeasonSettings", "GetRankedSeasonSettings", "GetRankedSeasonSettingsForUpdate", "ListRankedSeasonFinishers",
-		"SeedRankedSeasonRanks", "SeedRankedSeasonStats", "WriteRankedSeasonSettings"},
+		"SeedRankedSeasonRanks", "WriteRankedSeasonSettings"},
 	"social": {"GetSocialAccount", "GetSocialSettings", "UpdateSocialSettings"},
 }
 

@@ -6,3 +6,7 @@ INSERT INTO site_settings(key,value_json,updated_at) VALUES(sqlc.arg(setting_key
 
 -- name: DeleteSetting :exec
 DELETE FROM site_settings WHERE key = $1;
+
+-- name: ListSettings :many
+-- Every setting, for the copy each process keeps.
+SELECT key, value_json FROM site_settings;

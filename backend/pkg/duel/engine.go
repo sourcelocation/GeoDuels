@@ -13,8 +13,10 @@ import (
 	"geoduels/pkg/matchkind"
 )
 
+// StartingHP is what each side of a duel starts with; a win that keeps all of it is flawless.
+const StartingHP = 6000
+
 const (
-	startingHP      = 6000
 	roundDuration   = 45 * time.Second
 	roundIdleCap    = 8 * time.Minute
 	roundIntro      = 3 * time.Second
@@ -153,7 +155,7 @@ func (e *Engine) CreateMatchWithOptions(matchID string, playerIDs []string, prof
 			IsAdmin:           p.IsAdmin,
 			SelectedBadge:     p.SelectedBadge,
 			TeamID:            teamID,
-			HP:                startingHP,
+			HP:                StartingHP,
 			DamageMultiplier:  1,
 		}
 	}
@@ -834,8 +836,8 @@ func buildTeams(mode matchkind.Mode, playerIDs []string, players map[string]*gam
 		return nil
 	}
 	teams := map[string]*gameplay.TeamState{
-		"a": {TeamID: "a", Name: "Team Red", HP: startingHP, Players: []string{}},
-		"b": {TeamID: "b", Name: "Team Blue", HP: startingHP, Players: []string{}},
+		"a": {TeamID: "a", Name: "Team Red", HP: StartingHP, Players: []string{}},
+		"b": {TeamID: "b", Name: "Team Blue", HP: StartingHP, Players: []string{}},
 	}
 	for index, userID := range playerIDs {
 		player := players[userID]

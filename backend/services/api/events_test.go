@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -15,8 +16,10 @@ import (
 
 const liveEventsFile = "live-events.json"
 
-// One example of every event a client can be told. The web client's tests parse the same file, so a
-// change on either side that the other doesn't follow fails. UPDATE_FIXTURES=1 rewrites it.
+// One example of every event the API tells a client. The shared file also holds the matchmaker's
+// (queue.updated and match.started), which its own test checks, and the web client's tests parse all
+// of them, so a change on any side that the others don't follow fails. UPDATE_FIXTURES=1 rewrites the
+// API's entries and keeps the rest.
 func exampleEvents() []live.Event {
 	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	player := social.CompactPlayer{UserID: "u2", DisplayName: "Friend", Relationship: social.RelationshipFriends, PresenceStatus: "online"}
@@ -52,47 +55,65 @@ func exampleEvents() []live.Event {
 		itemRemoved{ConversationID: "direct:u1:u2", ItemID: "request:r1"},
 		partyUpdated{Party: party},
 		partyLeft{PartyID: "p1", Reason: "You left this party"},
-		queue,
-		matchStarted{Match: match},
 	}
 }
 
 func TestLiveEventsMatchTheSharedExamples(t *testing.T) {
-	encoded := make([]json.RawMessage, 0)
+	path := filepath.Join("..", "..", "..", "tests", "shared", liveEventsFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shared []json.RawMessage
+	if err := json.Unmarshal(data, &shared); err != nil {
+		t.Fatal(err)
+	}
 	for _, event := range exampleEvents() {
 		payload, err := live.Encode(event)
 		if err != nil {
 			t.Fatal(err)
 		}
-		encoded = append(encoded, payload)
+		at := slices.IndexFunc(shared, func(entry json.RawMessage) bool { return eventType(t, entry) == event.EventType() })
+		if os.Getenv("UPDATE_FIXTURES") != "" {
+			if at < 0 {
+				shared = append(shared, payload)
+			} else {
+				shared[at] = payload
+			}
+			continue
+		}
+		if at < 0 {
+			t.Fatalf("%s has no example of %s", liveEventsFile, event.EventType())
+		}
+		var want, got any
+		if err := json.Unmarshal(shared[at], &want); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(payload, &got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("%s changed: update %s and the web client's parsers\nwant %s\ngot  %s", event.EventType(), liveEventsFile, shared[at], payload)
+		}
 	}
-	path := filepath.Join("..", "..", "..", "tests", "shared", liveEventsFile)
 	if os.Getenv("UPDATE_FIXTURES") != "" {
-		data, err := json.MarshalIndent(encoded, "", "  ")
+		out, err := json.MarshalIndent(shared, "", "  ")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		return
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+}
+
+func eventType(t *testing.T, entry json.RawMessage) string {
+	t.Helper()
+	var event struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(entry, &event); err != nil {
 		t.Fatal(err)
 	}
-	var want, got any
-	if err := json.Unmarshal(data, &want); err != nil {
-		t.Fatal(err)
-	}
-	current, err := json.Marshal(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(current, &got); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(want, got) {
-		t.Fatalf("events changed: update %s and the web client's parsers\nwant %s\ngot  %s", liveEventsFile, data, current)
-	}
+	return event.Type
 }

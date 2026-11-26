@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"geoduels/internal/rating"
 	"geoduels/internal/storekit"
 	"geoduels/pkg/entityid"
 	db "geoduels/pkg/persistence/sqlc/db"
@@ -21,12 +20,13 @@ import (
 // comments, creator trust, gameplay roles, official map revisions, and the
 // gameplay map settings used at match launch.
 type PGStore struct {
-	pool *pgxpool.Pool
-	db   *db.Queries
+	pool     *pgxpool.Pool
+	db       *db.Queries
+	settings Settings
 }
 
-func NewPGStore(pool *pgxpool.Pool) *PGStore {
-	return &PGStore{pool: pool, db: db.New(pool)}
+func NewPGStore(pool *pgxpool.Pool, settings Settings) *PGStore {
+	return &PGStore{pool: pool, db: db.New(pool), settings: settings}
 }
 
 func (s *PGStore) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
@@ -180,20 +180,13 @@ func (s *PGStore) mapCountryStats(ctx context.Context, mapID string) ([]CountryS
 	return out, nil
 }
 
-// commentModerationRights reports whether the viewer may see (and delete)
-// hidden comments. The former persistence path went through GetProfile; only
-// the admin/moderator flags matter here.
+// commentModerationRights reports whether the viewer may see (and delete) hidden comments: staff
+// who can moderate. A viewer who isn't signed in can't.
 func (s *PGStore) commentModerationRights(ctx context.Context, userID string) bool {
-	seasonID, err := storekit.ActiveSeasonID(ctx, s.pool)
-	if err != nil {
+	id, err := storekit.ProfileUUID(strings.TrimSpace(userID))
+	if err != nil || !id.Valid {
 		return false
 	}
-	row, err := s.q().GetProfile(ctx, db.GetProfileParams{
-		UserID: strings.TrimSpace(userID), Mode: db.GdMatchMode(modeDuel), SeasonID: seasonID,
-		DefaultMmr: rating.InitialMMR, DefaultRd: rating.InitialRatingRD,
-	})
-	if err != nil {
-		return false
-	}
-	return row.IsAdmin || row.IsModerator
+	moderator, err := s.q().MapCommentModerator(ctx, id)
+	return err == nil && moderator.Bool
 }

@@ -1,92 +1,31 @@
-// Package queue holds the players looking for a ranked duel and decides who plays whom. A player
-// queues for one or more variants of a ranked duel; each pairing takes both players out of every
-// variant at once.
+// Package queue holds the players waiting for a ranked duel and decides who plays whom. Which queues
+// are offered is a setting (Offered); a player waits in one or more of them at once, and a pairing
+// takes both players out of all of them. The matchmaker owns the queue: it is the only writer.
 package queue
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"geoduels/internal/rating"
 	"geoduels/internal/storekit"
-	"geoduels/pkg/gameplay"
 	db "geoduels/pkg/persistence/sqlc/db"
 )
 
-// Variant is one ranked queue: a ruleset with street names shown or hidden.
-type Variant = string
-
-const (
-	Moving       Variant = "moving"
-	NoMove       Variant = "no_move"
-	NMPZ         Variant = "nmpz"
-	MovingHidden Variant = "moving_hidden"
-	NoMoveHidden Variant = "no_move_hidden"
-	NMPZHidden   Variant = "nmpz_hidden"
-)
-
-// Ranked lists the variants a player can queue for, in the order they are matched.
-var Ranked = []Variant{Moving, NoMoveHidden}
-
-// ParseVariants reads a comma-separated list of variants, keeping the ranked ones.
-func ParseVariants(raw string) []Variant {
-	out := []Variant{}
-	seen := map[Variant]bool{}
-	for _, part := range strings.Split(raw, ",") {
-		variant := Variant(strings.ToLower(strings.TrimSpace(part)))
-		if !isRanked(variant) || seen[variant] {
-			continue
-		}
-		seen[variant] = true
-		out = append(out, variant)
-	}
-	if len(out) == 0 {
-		return []Variant{Moving}
-	}
-	return out
-}
-
-func isRanked(variant Variant) bool {
-	for _, ranked := range Ranked {
-		if ranked == variant {
-			return true
-		}
-	}
-	return false
-}
-
-// Config is the match config a variant plays.
-func Config(variant Variant) gameplay.MatchConfig {
-	cfg := gameplay.MatchConfig{
-		Ruleset:        gameplay.RulesetMoving,
-		StreetNames:    gameplay.StreetNamesShown,
-		MultiplierMode: gameplay.MultiplierIndividual,
-	}
-	switch variant {
-	case NoMove, NoMoveHidden:
-		cfg.Ruleset = gameplay.RulesetNoMove
-	case NMPZ, NMPZHidden:
-		cfg.Ruleset = gameplay.RulesetNMPZ
-	}
-	switch variant {
-	case MovingHidden, NoMoveHidden, NMPZHidden:
-		cfg.StreetNames = gameplay.StreetNamesHidden
-	}
-	return gameplay.NormalizeMatchConfig(cfg)
-}
-
-// freshFor is how long a ticket counts after its player's socket last refreshed it.
-const freshFor = 30 * time.Second
-
-// Ticket is a player waiting in one variant.
+// Ticket is a player waiting, in every queue they chose.
 type Ticket struct {
-	UserID   string
-	Variant  Variant
-	MMR      int
-	JoinedAt time.Time
+	UserID string
+	Queues []string
+	MMR    int
+	RD     float64
+	// LastOpponentID is whom the player last played in a rated match.
+	LastOpponentID string
+	JoinedAt       time.Time
 }
 
 type PGStore struct {
@@ -98,32 +37,27 @@ func NewPGStore(pool *pgxpool.Pool) *PGStore {
 	return &PGStore{pool: pool, db: db.New(pool)}
 }
 
-// Join queues the player for these variants only, at the given rating.
-func (s *PGStore) Join(ctx context.Context, userID string, variants []Variant, mmr int) error {
+// Join queues the player in these queues at their rating in the season, returning when they joined.
+// Queueing again only changes the queues: the player keeps their place.
+func (s *PGStore) Join(ctx context.Context, userID string, queues []string, seasonID string) (time.Time, error) {
 	id, err := storekit.ProfileUUID(userID)
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
-	return storekit.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		q := s.db.WithTx(tx)
-		if err := q.DeleteQueueTickets(ctx, id); err != nil {
-			return err
-		}
-		for _, variant := range variants {
-			if err := q.UpsertQueueTicket(ctx, db.UpsertQueueTicketParams{UserID: id, Variant: variant, Mmr: int32(mmr)}); err != nil {
-				return err
-			}
-		}
-		return nil
+	joinedAt, err := s.db.JoinQueue(ctx, db.JoinQueueParams{
+		UserID: id, Queues: queues, SeasonID: seasonID, DefaultMmr: rating.InitialMMR, DefaultRd: rating.InitialRatingRD,
 	})
+	return joinedAt.Time, err
 }
 
-// TouchAll keeps these connected players' tickets fresh.
-func (s *PGStore) TouchAll(ctx context.Context, userIDs []string) error {
-	if len(userIDs) == 0 {
-		return nil
+// Leave takes the player out of the queue, reporting whether they were in it.
+func (s *PGStore) Leave(ctx context.Context, userID string) (bool, error) {
+	id, err := storekit.ProfileUUID(userID)
+	if err != nil {
+		return false, err
 	}
-	return s.db.TouchQueueTicketsOf(ctx, storekit.UUIDList(userIDs))
+	left, err := s.db.LeaveQueue(ctx, id)
+	return left > 0, err
 }
 
 // QueuedSince is when the player joined the queue, if they're in it.
@@ -133,62 +67,47 @@ func (s *PGStore) QueuedSince(ctx context.Context, userID string) (time.Time, bo
 		return time.Time{}, false, err
 	}
 	joinedAt, err := s.db.QueueTicketJoinedAt(ctx, id)
-	if err != nil {
-		return time.Time{}, false, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
 	}
-	return joinedAt.Time, joinedAt.Valid, nil
+	return joinedAt.Time, err == nil, err
 }
 
-// Leave takes the player out of every variant.
-func (s *PGStore) Leave(ctx context.Context, userID string) error {
-	id, err := storekit.ProfileUUID(userID)
-	if err != nil {
-		return err
-	}
-	return s.db.DeleteQueueTickets(ctx, id)
+// TakeTx takes these players out of the queue in the caller's transaction, returning who was in it.
+// Every match start takes its players' tickets before it seats them, so a pairing pass holding a
+// ticket and a start for the same player lock in the same order.
+func TakeTx(ctx context.Context, tx pgx.Tx, userIDs []string) ([]string, error) {
+	rows, err := db.New(tx).TakeQueueTickets(ctx, storekit.UUIDList(userIDs))
+	return uuidStrings(rows), err
 }
 
-// LeaveTx takes the player out of every variant in the caller's transaction.
-func LeaveTx(ctx context.Context, tx pgx.Tx, userID string) error {
-	id, err := storekit.ProfileUUID(userID)
-	if err != nil {
-		return err
-	}
-	return db.New(tx).DeleteQueueTickets(ctx, id)
-}
-
-// LockTx takes the matchmaker's lock for the caller's transaction, reporting whether it got it.
-// Only one matchmaking pass runs at a time, whichever process starts it.
-func LockTx(ctx context.Context, tx pgx.Tx) (bool, error) {
-	return db.New(tx).TryMatchmakerLock(ctx)
-}
-
-// TicketsTx lists the fresh tickets, oldest first, and drops the stale ones.
-func TicketsTx(ctx context.Context, tx pgx.Tx) ([]Ticket, error) {
-	q := db.New(tx)
-	if err := q.DeleteStaleQueueTickets(ctx, freshFor.Seconds()); err != nil {
-		return nil, err
-	}
-	rows, err := q.ListQueueTickets(ctx, freshFor.Seconds())
+// LockWaitingTx locks the tickets of connected players that no other pass holds, longest-waiting
+// first, until the caller's transaction ends.
+func LockWaitingTx(ctx context.Context, tx pgx.Tx) ([]Ticket, error) {
+	rows, err := db.New(tx).LockWaitingTickets(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Ticket, len(rows))
 	for i, row := range rows {
-		out[i] = Ticket{UserID: storekit.UUIDVal(row.UserID), Variant: row.Variant, MMR: int(row.Mmr), JoinedAt: row.JoinedAt.Time}
+		out[i] = Ticket{
+			UserID: storekit.UUIDVal(row.UserID), Queues: row.Queues, MMR: int(row.Mmr), RD: row.Rd,
+			LastOpponentID: storekit.UUIDVal(row.LastOpponentID), JoinedAt: row.JoinedAt.Time,
+		}
 	}
 	return out, nil
 }
 
-// TakeTx takes both players out of every variant, reporting whether both were still queued.
-func TakeTx(ctx context.Context, tx pgx.Tx, a, b string) (bool, error) {
-	rows, err := db.New(tx).TakeQueueTickets(ctx, storekit.UUIDList([]string{a, b}))
-	if err != nil {
-		return false, err
+// DropDisconnectedTx takes out the players with no connection left, returning who they were.
+func DropDisconnectedTx(ctx context.Context, tx pgx.Tx) ([]string, error) {
+	rows, err := db.New(tx).DropDisconnectedTickets(ctx)
+	return uuidStrings(rows), err
+}
+
+func uuidStrings(ids []pgtype.UUID) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = storekit.UUIDVal(id)
 	}
-	taken := map[string]bool{}
-	for _, row := range rows {
-		taken[storekit.UUIDVal(row.UserID)] = true
-	}
-	return taken[a] && taken[b], nil
+	return out
 }

@@ -14,7 +14,7 @@ insert into maps(id,owner_user_id,display_name,description,visibility,status,dif
 update maps set favorite_count=greatest(favorite_count-1,0),updated_at=now() where id=$1;
 
 -- name: DeleteArchivableMap :execrows
-delete from maps m where m.id=sqlc.arg(map_id) and (m.owner_user_id=sqlc.arg(user_id) or sqlc.arg(allow_any)::boolean) and m.archived_at is null and not exists(select 1 from match_round_plans p where p.map_id=m.id) and not exists(select 1 from parties p where p.map_id=m.id);
+delete from maps m where m.id=sqlc.arg(map_id) and (m.owner_user_id=sqlc.arg(user_id) or sqlc.arg(allow_any)::boolean) and m.archived_at is null and not exists(select 1 from match_sessions s where s.map_id=m.id) and not exists(select 1 from parties p where p.map_id=m.id);
 
 -- name: DeleteCountryStats :exec
  delete from map_country_stats where map_id=$1;

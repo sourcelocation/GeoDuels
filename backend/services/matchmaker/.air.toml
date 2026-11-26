@@ -1,0 +1,18 @@
+# Air for matchmaker, on this machine (Procfile), from backend/: it rebuilds and restarts the service when
+# its code changes, against compose.yaml's services (../.env, then dev.env).
+tmp_dir = "bin/air/matchmaker"
+env_files = ["../.env", "dev.env"]
+
+[build]
+cmd = "go run ./cmd/migrate && go build -o bin/matchmaker ./services/matchmaker"
+entrypoint = ["bin/matchmaker"]
+include_dir = ["services/matchmaker", "internal", "pkg", "db"]
+include_ext = ["go", "sql", "tpl", "tmpl", "html", "yaml", "yml", "json"]
+include_file = ["go.mod", "go.sum"]
+exclude_regex = ["_test\\.go$"]
+delay = 250 # ms
+send_interrupt = true
+kill_delay = "5s"
+
+[misc]
+clean_on_exit = true

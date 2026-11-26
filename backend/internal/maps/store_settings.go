@@ -23,32 +23,7 @@ func readGameplaySettingsTx(ctx context.Context, q db.DBTX) (GameplaySettings, e
 		}
 		return GameplaySettings{}, err
 	}
-	var legacy struct {
-		MovingMapID             string `json:"movingMapId"`
-		NoMoveMapID             string `json:"noMoveMapId"`
-		NMPZMapID               string `json:"nmpzMapId"`
-		RankedMovingMapID       string `json:"rankedMovingMapId"`
-		RankedNMPZMapID         string `json:"rankedNmpzMapId"`
-		SingleplayerMovingMapID string `json:"singleplayerMovingMapId"`
-		SingleplayerNMPZMapID   string `json:"singleplayerNmpzMapId"`
-	}
-	if json.Unmarshal(raw, &legacy) != nil {
-		return defaultGameplayMapSettings(), nil
-	}
-	firstNonEmpty := func(values ...string) string {
-		for _, value := range values {
-			if trimmed := strings.TrimSpace(value); trimmed != "" {
-				return trimmed
-			}
-		}
-		return ""
-	}
-	return normalizeGameplayMapSettings(GameplaySettings{
-		MovingMapID: firstNonEmpty(legacy.MovingMapID, legacy.RankedMovingMapID, legacy.SingleplayerMovingMapID),
-		// Ranked NMPZ became ranked No Move; keep that map for the no-move slot.
-		NoMoveMapID: firstNonEmpty(legacy.NoMoveMapID, legacy.RankedNMPZMapID),
-		NMPZMapID:   firstNonEmpty(legacy.NMPZMapID, legacy.SingleplayerNMPZMapID, legacy.RankedNMPZMapID),
-	}), nil
+	return decodeGameplayMapSettings(string(raw)), nil
 }
 
 func (s *PGStore) SetMapOfficial(adminUserID, mapID string, official bool) (Map, error) {

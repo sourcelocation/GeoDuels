@@ -12,10 +12,9 @@ import (
 // Store is the match lifecycle and history: starting matches, the node side of running them,
 // finalizing them, and reading them back.
 type Store interface {
-	Start(ctx context.Context, p StartParams) error
-	StartTx(ctx context.Context, tx pgx.Tx, p StartParams) error
+	StartTx(ctx context.Context, tx pgx.Tx, p StartParams) (Conflict, error)
 	EndMatch(ctx context.Context, matchID, outcome string) (bool, error)
-	PickUp(ctx context.Context, node Node, run func(PickedUp) error) (string, error)
+	PickUp(ctx context.Context, node Node, run func(PickedUp) (gameplay.MatchConfig, error)) (string, error)
 	NodeOpenMatches(ctx context.Context, node Node) (map[string]bool, error)
 	FinalizeMatch(snap gameplay.MatchSnapshot) (gameplay.MatchSnapshot, error)
 	MatchSessionStatus(ctx context.Context, matchID string) (SessionStatus, error)
@@ -27,8 +26,5 @@ type Store interface {
 	ListPlayerMatchHistoryPage(userID string, limit int, beforeEndedAt time.Time, beforeMatchID string, rankedOnly bool) (MatchHistoryPage, error)
 	PlayerParticipatedInMatch(userID, matchID string) (bool, error)
 }
-
-// TxStep runs inside another module's transaction.
-type TxStep = func(ctx context.Context, tx pgx.Tx) error
 
 var _ Store = (*PGStore)(nil)

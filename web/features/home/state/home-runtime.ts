@@ -39,12 +39,16 @@ function createHomeRuntime(): HomeRuntime {
       runtime.directChat?.close();
     }
   });
+  // A match the matchmaker answers with goes where a match.started event would take it.
+  const onMatchStarted = (matchId: string) => runtime.matchRouteController.acceptStartedMatch(matchId);
   runtime.matchController = new MatchController({
     sessionController: runtime.sessionController,
-    sfxController: runtime.sfxController
+    sfxController: runtime.sfxController,
+    onMatchStarted
   });
   runtime.partyController = new PartyController({
-    sessionController: runtime.sessionController
+    sessionController: runtime.sessionController,
+    onMatchStarted
   });
   runtime.matchRouteController = new MatchRouteController({
     sessionController: runtime.sessionController,

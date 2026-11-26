@@ -1,37 +1,15 @@
--- name: EnsureRankedStats :exec
-insert into ranked_stats (user_id,mode,season_id,games_played,wins) values ($1,$2,$3,0,0) on conflict (user_id,mode,season_id) do nothing;
-
 -- name: EnsureUserRank :exec
 insert into ranks (user_id,mode,mmr,season_id) values ($1,$2,$4,$3) on conflict (user_id,mode,season_id) do nothing;
 
 -- name: EnsureUserStats :exec
 insert into user_stats (user_id,games_played,wins) values ($1,0,0) on conflict (user_id) do nothing;
 
--- name: GetBestWinStreak :one
-with season_matches as (
-  select h.ended_at,h.match_id,h.winner_user_id=sqlc.arg(user_id)::uuid won
-  from match_players mp join match_history h on h.match_id=mp.match_id
-  where mp.user_id=sqlc.arg(user_id)::uuid and h.mode='duel' and h.ranked
-    and (sqlc.arg(since)::timestamptz is null or h.ended_at >= sqlc.arg(since)::timestamptz)
-), streak_groups as (
-  select won,count(*) filter(where not won) over(order by ended_at asc,match_id asc) streak_group
-  from season_matches
-), winning_streaks as (
-  select count(*)::int streak from streak_groups where won group by streak_group
-)
-select coalesce(max(streak),0)::int from winning_streaks;
-
--- name: GetFlawlessWins :one
-select count(*)::int from match_players mp join match_history h on h.match_id=mp.match_id where mp.user_id=$1 and h.mode='duel' and h.winner_user_id=$1 and mp.hp>=6000;
-
--- name: GetPerfectGuesses :one
-select count(*)::int from ranked_guess_events where user_id=$1 and score=5000;
-
 -- name: GetProfile :one
-select coalesce(nullif(u.display_name, seed.user_id::text), ui.provider_name, sqlc.arg(user_id)::text) display_name, coalesce(u.avatar_url,ui.avatar_url,'') avatar_url, coalesce(r.mmr,sqlc.arg(default_mmr)::int) mmr, coalesce(r.rd,sqlc.arg(default_rd)::int) rating_rd, greatest(coalesce(us.games_played,0),coalesce(history_stats.games_played,0)) games_played, greatest(coalesce(us.wins,0),coalesce(history_stats.wins,0)) wins, coalesce(rs.games_played,0) ranked_games_played, coalesce(rs.wins,0) ranked_wins, (u.id is not null and gd_is_guest(u.id)) is_guest, gd_is_admin(u.id) is_admin, gd_is_judge(u.id) is_moderator, gd_is_banned(u.id) is_banned, coalesce(u.ban_reason,'') ban_reason, coalesce(u.selected_badge_code,0)::smallint selected_badge_code from (select sqlc.arg(user_id)::uuid user_id) seed left join users u on u.id=seed.user_id left join lateral (select provider_name,avatar_url from user_identities where user_id=seed.user_id and provider='google' order by created_at asc limit 1) ui on true left join ranks r on r.user_id=seed.user_id and r.mode=sqlc.arg(mode) and r.season_id=sqlc.arg(season_id) left join user_stats us on us.user_id=seed.user_id left join lateral (select count(*)::int games_played,count(*) filter(where h.winner_user_id=seed.user_id)::int wins from match_players mp join match_history h on h.match_id=mp.match_id where mp.user_id=seed.user_id and h.mode='duel') history_stats on true left join ranked_stats rs on rs.user_id=seed.user_id and rs.mode=sqlc.arg(mode) and rs.season_id=sqlc.arg(season_id);
+select coalesce(nullif(u.display_name, seed.user_id::text), ui.provider_name, sqlc.arg(user_id)::text) display_name, coalesce(u.avatar_url,ui.avatar_url,'') avatar_url, coalesce(r.mmr,sqlc.arg(default_mmr)::int) mmr, coalesce(r.rd,sqlc.arg(default_rd)::int) rating_rd, coalesce(us.games_played,0)::int games_played, coalesce(us.wins,0)::int wins, coalesce(r.games_played,0)::int ranked_games_played, coalesce(r.wins,0)::int ranked_wins, (u.id is not null and gd_is_guest(u.id)) is_guest, gd_is_admin(u.id) is_admin, gd_is_judge(u.id) is_moderator, gd_is_banned(u.id) is_banned, coalesce(u.ban_reason,'') ban_reason, coalesce(u.selected_badge_code,0)::smallint selected_badge_code from (select sqlc.arg(user_id)::uuid user_id) seed left join users u on u.id=seed.user_id left join lateral (select provider_name,avatar_url from user_identities where user_id=seed.user_id and provider='google' order by created_at asc limit 1) ui on true left join ranks r on r.user_id=seed.user_id and r.mode=sqlc.arg(mode) and r.season_id=sqlc.arg(season_id) left join user_stats us on us.user_id=seed.user_id;
 
 -- name: GetPublicProfile :one
-select u.id user_id, gd_display_name(u.display_name,ui.provider_name,u.id) display_name, coalesce(u.avatar_url,ui.avatar_url,'') avatar_url, coalesce(r.mmr,sqlc.arg(default_mmr)::int) mmr, coalesce(r.rd,sqlc.arg(default_rd)::int) rating_rd, greatest(coalesce(us.games_played,0),coalesce(history_stats.games_played,0))::int games_played, greatest(coalesce(us.wins,0),coalesce(history_stats.wins,0))::int wins, coalesce(rs.games_played,0)::int ranked_games_played, coalesce(rs.wins,0)::int ranked_wins, coalesce(u.selected_badge_code,0)::smallint selected_badge_code from users u left join lateral (select provider_name,avatar_url from user_identities where user_id=u.id and provider='google' order by created_at asc limit 1) ui on true left join ranks r on r.user_id=u.id and r.mode=sqlc.arg(mode) and r.season_id=sqlc.arg(season_id) left join user_stats us on us.user_id=u.id left join lateral (select count(*)::int games_played,count(*) filter(where h.winner_user_id=u.id)::int wins from match_players mp join match_history h on h.match_id=mp.match_id where mp.user_id=u.id and h.mode='duel') history_stats on true left join ranked_stats rs on rs.user_id=u.id and rs.mode=sqlc.arg(mode) and rs.season_id=sqlc.arg(season_id) where gd_is_registered(u.id) and u.nickname_claimed_at is not null and lower(u.display_name)=lower(sqlc.arg(display_name));
+-- A season's leaderboard has as many players as its last place.
+select u.id user_id, gd_display_name(u.display_name,ui.provider_name,u.id) display_name, coalesce(u.avatar_url,ui.avatar_url,'') avatar_url, coalesce(r.mmr,sqlc.arg(default_mmr)::int) mmr, coalesce(r.rd,sqlc.arg(default_rd)::int) rating_rd, coalesce(us.games_played,0)::int games_played, coalesce(us.wins,0)::int wins, coalesce(us.flawless_wins,0)::int flawless_wins, coalesce(us.perfect_guesses,0)::int perfect_guesses, coalesce(r.games_played,0)::int ranked_games_played, coalesce(r.wins,0)::int ranked_wins, coalesce(r.best_streak,0)::int best_win_streak, coalesce(r.leaderboard_rank,0)::int leaderboard_rank, (select coalesce(max(b.leaderboard_rank),0) from ranks b where b.mode=sqlc.arg(mode) and b.season_id=sqlc.arg(season_id) and b.leaderboard_rank is not null)::int leaderboard_total, coalesce(u.selected_badge_code,0)::smallint selected_badge_code from users u left join lateral (select provider_name,avatar_url from user_identities where user_id=u.id and provider='google' order by created_at asc limit 1) ui on true left join ranks r on r.user_id=u.id and r.mode=sqlc.arg(mode) and r.season_id=sqlc.arg(season_id) left join user_stats us on us.user_id=u.id where gd_is_registered(u.id) and u.nickname_claimed_at is not null and lower(u.display_name)=lower(sqlc.arg(display_name));
 
 -- name: GetSocialAccount :one
 select gd_is_registered(users.id) as has_identity, social_requests_enabled, social_party_invites_enabled from users where id=$1;
@@ -53,3 +31,22 @@ update users set social_discoverable=$2, social_presence_visible=$3, social_requ
 
 -- name: UpsertUser :exec
 insert into users (id,email,display_name,avatar_url) values ($1,$2,$3,null) on conflict (id) do update set email=excluded.email, display_name=excluded.display_name;
+
+-- name: ListMatchProfiles :many
+-- What a match shows of its players and rates them by: names, avatars, ratings and ranked games in
+-- the season, and the badge each shows.
+SELECT u.id AS user_id, gd_display_name(u.display_name, ui.provider_name, u.id) AS display_name,
+       coalesce(u.avatar_url, ui.avatar_url, '') AS avatar_url,
+       coalesce(r.mmr, sqlc.arg(default_mmr)::int)::int AS mmr, coalesce(r.rd, sqlc.arg(default_rd)::float8)::float8 AS rating_rd,
+       coalesce(r.games_played, 0)::int AS ranked_games_played,
+       gd_is_guest(u.id)::boolean AS is_guest, gd_is_admin(u.id)::boolean AS is_admin,
+       coalesce(ub.badge_code, 0)::smallint AS badge_code, coalesce(ub.level, 1)::smallint AS badge_level,
+       coalesce(ub.extra, 0)::smallint AS badge_extra
+FROM users u
+LEFT JOIN LATERAL (
+    SELECT provider_name, avatar_url FROM user_identities WHERE user_id = u.id AND provider IN ('discord', 'google')
+    ORDER BY CASE provider WHEN 'discord' THEN 0 WHEN 'google' THEN 1 ELSE 2 END, created_at ASC LIMIT 1
+) ui ON true
+LEFT JOIN ranks r ON r.user_id = u.id AND r.mode = sqlc.arg(mode) AND r.season_id = sqlc.arg(season_id)
+LEFT JOIN user_badges ub ON ub.user_id = u.id AND ub.badge_code = u.selected_badge_code
+WHERE u.id = ANY(sqlc.arg(user_ids)::uuid[]);

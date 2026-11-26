@@ -464,6 +464,7 @@ func (a *api) setGameplayMapRole(c echo.Context) error {
 	if err != nil {
 		return plainTextError(c, http.StatusBadRequest, err.Error())
 	}
+	a.settingsChanged(c.Request().Context())
 	return writeJSONResponse(c, newCustomMap(item))
 }
 

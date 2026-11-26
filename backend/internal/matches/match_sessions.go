@@ -18,52 +18,51 @@ import (
 	db "geoduels/pkg/persistence/sqlc/db"
 )
 
-// A match's life, all in its match_sessions row: Start writes it starting; a gameplay node picks it
-// up and stamps it with its id and lease token, which makes it live while that lease holds; it ends
-// when the node finalizes it, when a player replaces it, or when the sweep finds its node gone.
+// A match's life, all in its match_sessions row: the matchmaker writes it starting; a gameplay node
+// picks it up, picks its rounds and stamps it with its id, lease token and the map it plays, which
+// makes it live while that lease holds; it ends when the node finalizes it, when a player replaces it,
+// or when the sweep finds its node gone.
 
-// Seat is one player's place in a new match, with the profile they play under.
+// Seat is one player's place in a new match, with the name and avatar the match shows before it runs.
 type Seat struct {
-	Profile gameplay.PlayerProfile `json:"profile"`
-	Team    string                 `json:"team,omitempty"`
+	UserID      string
+	Team        string
+	DisplayName string
+	AvatarURL   string
 }
 
-// LaunchSpec is what a node needs to run a match, beyond its kind, config and round plan.
+// LaunchSpec is what a node needs to run a match, beyond its kind and config: the season a rated
+// match counts in, and who sits where. The node reads its players' profiles itself.
 type LaunchSpec struct {
-	SeasonID string `json:"seasonId,omitempty"`
-	Seats    []Seat `json:"seats"`
+	SeasonID string       `json:"seasonId,omitempty"`
+	Seats    []LaunchSeat `json:"seats"`
 }
 
-// Plan is the map a match plays, chosen inside its start transaction.
-type Plan struct {
-	Config gameplay.MatchConfig
-	MapID  string
+// LaunchSeat is a player's place in a match as its node runs it.
+type LaunchSeat struct {
+	UserID string `json:"userId"`
+	Team   string `json:"team,omitempty"`
 }
 
 type StartParams struct {
 	MatchID      string
 	Kind         matchkind.Kind
 	Seats        []Seat
-	SeasonID     string
 	Config       gameplay.MatchConfig
 	PartyID      string
 	ReturnTarget *ReturnTarget
-	// Plan picks the map and writes the round plan in the start transaction.
-	Plan func(ctx context.Context, tx pgx.Tx) (Plan, error)
-	// After runs in the start transaction once the match is written.
-	After func(ctx context.Context, tx pgx.Tx) error
 }
 
-// ConflictError says a player is already in a match that a new one cannot replace.
-type ConflictError struct {
+// Conflict is a player already in a match that a new one can't replace. The zero Conflict is none:
+// the start went through. MatchID and Kind are empty when another start seated the player first.
+type Conflict struct {
 	UserID  string
 	MatchID string
 	Kind    matchkind.Kind
 }
 
-func (e *ConflictError) Error() string {
-	return fmt.Sprintf("player %s is already in %s match %s", e.UserID, e.Kind, e.MatchID)
-}
+// Blocked reports whether a player kept the match from starting.
+func (c Conflict) Blocked() bool { return c.UserID != "" }
 
 // Outcomes a match ends with, besides finished.
 const (
@@ -72,121 +71,113 @@ const (
 	OutcomeInterrupted = "interrupted"
 )
 
-// Start writes a new match and seats its players, all in one transaction. A player's other match
-// that is over is closed; one whose kind is replaceable ends as replaced; any other is a conflict.
-func (s *PGStore) Start(ctx context.Context, p StartParams) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	return s.withTx(ctx, func(tx pgx.Tx) error { return s.StartTx(ctx, tx, p) })
+// startSeat is a seat as StartMatch reads it.
+type startSeat struct {
+	UserID      string `json:"user_id"`
+	TeamID      string `json:"team_id"`
+	DisplayName string `json:"display_name"`
+	AvatarURL   string `json:"avatar_url"`
 }
 
-// StartTx is Start in the caller's transaction.
-func (s *PGStore) StartTx(ctx context.Context, tx pgx.Tx, p StartParams) error {
+// StartTx writes a new match and seats its players in the caller's transaction. A player's other
+// match that is over is closed and one whose kind is replaceable ends as replaced; any other is a
+// Conflict, and the caller rolls the start back. A rated match counts in the season active when it
+// starts, read in the same transaction.
+func (s *PGStore) StartTx(ctx context.Context, tx pgx.Tx, p StartParams) (Conflict, error) {
 	spec, ok := matchkind.Lookup(p.Kind)
 	if !ok {
-		return fmt.Errorf("unknown match kind %q", p.Kind)
+		return Conflict{}, fmt.Errorf("unknown match kind %q", p.Kind)
 	}
 	seats := make([]matchkind.Seat, len(p.Seats))
 	userIDs := make([]string, len(p.Seats))
+	launch := LaunchSpec{Seats: make([]LaunchSeat, len(p.Seats))}
+	rows := make([]startSeat, len(p.Seats))
 	for i, seat := range p.Seats {
-		seats[i] = matchkind.Seat{UserID: seat.Profile.UserID, Team: seat.Team}
-		userIDs[i] = seat.Profile.UserID
+		seats[i] = matchkind.Seat{UserID: seat.UserID, Team: seat.Team}
+		userIDs[i] = seat.UserID
+		launch.Seats[i] = LaunchSeat{UserID: seat.UserID, Team: seat.Team}
+		rows[i] = startSeat{UserID: seat.UserID, TeamID: seat.Team, DisplayName: seat.DisplayName, AvatarURL: seat.AvatarURL}
 	}
 	if err := spec.CheckSeats(seats); err != nil {
-		return err
+		return Conflict{}, err
 	}
 	matchUUID, err := profileUUID(p.MatchID)
 	if err != nil {
-		return errors.New("match id required")
+		return Conflict{}, errors.New("match id required")
 	}
-	{
-		q := s.db.WithTx(tx)
-		if err := clearSeatsTx(ctx, q, userIDs); err != nil {
-			return err
-		}
-		plan := Plan{Config: gameplay.NormalizeMatchConfig(p.Config)}
-		if p.Plan != nil {
-			if plan, err = p.Plan(ctx, tx); err != nil {
-				return err
-			}
-		}
-		config, _ := json.Marshal(gameplay.NormalizeMatchConfig(plan.Config))
-		launch, _ := json.Marshal(LaunchSpec{SeasonID: p.SeasonID, Seats: p.Seats})
-		target := NormalizeReturnTarget(p.ReturnTarget)
-		partyID, err := storekit.OptionalUUID(p.PartyID)
-		if err != nil {
-			return err
-		}
-		mapID, err := storekit.OptionalUUID(plan.MapID)
-		if err != nil {
-			return err
-		}
-		returnMap, err := storekit.OptionalUUID(target.MapID)
-		if err != nil {
-			return err
-		}
-		returnParty, err := storekit.OptionalUUID(target.PartyID)
-		if err != nil {
-			return err
-		}
-		if err := q.InsertMatchSession(ctx, db.InsertMatchSessionParams{
-			MatchID: matchUUID, Kind: db.GdMatchKind(p.Kind), SourcePartyID: partyID,
-			ConfigJson: config, MapID: mapID, SpecJson: launch,
-			ReturnTargetKind: string(target.Kind), ReturnTargetMapID: returnMap, ReturnTargetPartyID: returnParty,
-		}); err != nil {
-			return err
-		}
-		for _, seat := range p.Seats {
-			userUUID, err := profileUUID(seat.Profile.UserID)
-			if err != nil {
-				return err
-			}
-			joined := pgtype.Timestamptz{}
-			if partyID.Valid {
-				t, err := q.ParticipantJoinedAt(ctx, db.ParticipantJoinedAtParams{PartyID: partyID, UserID: userUUID})
-				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-					return err
-				}
-				joined = t
-			}
-			seated, err := q.InsertMatchSeat(ctx, db.InsertMatchSeatParams{
-				MatchID: matchUUID, UserID: userUUID,
-				TeamID:      pgtype.Text{String: seat.Team, Valid: seat.Team != ""},
-				DisplayName: seat.Profile.DisplayName, AvatarUrl: seat.Profile.AvatarURL, JoinedPartyAt: joined,
-			})
-			if err != nil {
-				return err
-			}
-			if seated == 0 {
-				// Another start seated this player after the seats were cleared.
-				return &ConflictError{UserID: seat.Profile.UserID}
-			}
-		}
-		if p.After != nil {
-			return p.After(ctx, tx)
-		}
-		return nil
+	q := s.db.WithTx(tx)
+	if conflict, err := clearSeatsTx(ctx, q, userIDs); err != nil || conflict.Blocked() {
+		return conflict, err
 	}
+	if spec.Rated {
+		if launch.SeasonID, err = storekit.ActiveSeasonID(ctx, tx); err != nil {
+			return Conflict{}, err
+		}
+	}
+	config, err := json.Marshal(gameplay.NormalizeMatchConfig(p.Config))
+	if err != nil {
+		return Conflict{}, err
+	}
+	launchJSON, err := json.Marshal(launch)
+	if err != nil {
+		return Conflict{}, err
+	}
+	seatsJSON, err := json.Marshal(rows)
+	if err != nil {
+		return Conflict{}, err
+	}
+	target := NormalizeReturnTarget(p.ReturnTarget)
+	partyID, err := storekit.OptionalUUID(p.PartyID)
+	if err != nil {
+		return Conflict{}, err
+	}
+	returnMap, err := storekit.OptionalUUID(target.MapID)
+	if err != nil {
+		return Conflict{}, err
+	}
+	returnParty, err := storekit.OptionalUUID(target.PartyID)
+	if err != nil {
+		return Conflict{}, err
+	}
+	seated, err := q.StartMatch(ctx, db.StartMatchParams{
+		MatchID: matchUUID, Kind: db.GdMatchKind(p.Kind), SourcePartyID: partyID,
+		ConfigJson: config, SpecJson: launchJSON, SeatsJson: seatsJSON,
+		ReturnTargetKind: string(target.Kind), ReturnTargetMapID: returnMap, ReturnTargetPartyID: returnParty,
+	})
+	if err != nil {
+		return Conflict{}, err
+	}
+	in := map[string]bool{}
+	for _, id := range seated {
+		in[storekit.UUIDVal(id)] = true
+	}
+	for _, userID := range userIDs {
+		if !in[userID] {
+			// Another start seated this player after the seats were cleared.
+			return Conflict{UserID: userID}, nil
+		}
+	}
+	return Conflict{}, nil
 }
 
 // clearSeatsTx frees the players' seats in matches that are over and ends the replaceable ones still
 // running, or reports the first match that blocks a new one.
-func clearSeatsTx(ctx context.Context, q *db.Queries, userIDs []string) error {
+func clearSeatsTx(ctx context.Context, q *db.Queries, userIDs []string) (Conflict, error) {
 	rows, err := q.LockActiveSeats(ctx, storekit.UUIDList(userIDs))
 	if err != nil {
-		return err
+		return Conflict{}, err
 	}
 	for _, row := range rows {
 		kind := matchkind.Kind(row.Kind)
 		outcome, blocks := SeatOutcome(SessionStatus(row.Status), kind)
 		if blocks {
-			return &ConflictError{UserID: storekit.UUIDVal(row.UserID), MatchID: storekit.UUIDVal(row.MatchID), Kind: kind}
+			return Conflict{UserID: storekit.UUIDVal(row.UserID), MatchID: storekit.UUIDVal(row.MatchID), Kind: kind}, nil
 		}
 		if _, err := q.EndMatch(ctx, db.EndMatchParams{MatchID: row.MatchID, Outcome: pgtype.Text{String: outcome, Valid: true}}); err != nil {
-			return err
+			return Conflict{}, err
 		}
 	}
-	return nil
+	return Conflict{}, nil
 }
 
 // SeatOutcome decides what happens to a player's seat in another match when a new one starts: a
@@ -246,10 +237,11 @@ type PickedUp struct {
 	Spec    LaunchSpec
 }
 
-// PickUp gives the oldest match waiting for a node to run, and stamps it with the node once run
-// accepts it. It returns the match's id, empty when none was waiting; on an error after run
+// PickUp gives the oldest match waiting for a node to run, and stamps it with the node and the
+// config run returns, which names the map it plays. A match run refuses ends as aborted: any node
+// would refuse it. It returns the match's id, empty when none was waiting; on an error after run
 // accepted it, the caller must let that match go, since another node may pick it up.
-func (s *PGStore) PickUp(ctx context.Context, node Node, run func(PickedUp) error) (string, error) {
+func (s *PGStore) PickUp(ctx context.Context, node Node, run func(PickedUp) (gameplay.MatchConfig, error)) (string, error) {
 	accepted := ""
 	err := s.withTx(ctx, func(tx pgx.Tx) error {
 		q := s.db.WithTx(tx)
@@ -268,13 +260,26 @@ func (s *PGStore) PickUp(ctx context.Context, node Node, run func(PickedUp) erro
 		if err := json.Unmarshal(row.SpecJson, &match.Spec); err != nil {
 			return err
 		}
-		if err := run(match); err != nil {
-			return err
+		config, err := run(match)
+		if err != nil {
+			if _, endErr := q.EndMatch(ctx, db.EndMatchParams{MatchID: row.MatchID, Outcome: pgtype.Text{String: OutcomeAborted, Valid: true}}); endErr != nil {
+				return errors.Join(err, endErr)
+			}
+			return nil
 		}
 		accepted = match.MatchID
+		configJSON, err := json.Marshal(config)
+		if err != nil {
+			return err
+		}
+		mapID, err := storekit.OptionalUUID(config.MapID)
+		if err != nil {
+			return err
+		}
 		return q.PlaceMatch(ctx, db.PlaceMatchParams{
 			MatchID: row.MatchID, NodeID: pgtype.Text{String: node.ID, Valid: true},
 			NodeEpoch: pgtype.Int8{Int64: node.Epoch, Valid: true}, NodeUrl: pgtype.Text{String: node.URL, Valid: true},
+			MapID: mapID, ConfigJson: configJSON,
 		})
 	})
 	return accepted, err
@@ -502,8 +507,17 @@ func (spec LaunchSpec) SeatTeams() map[string]string {
 	teams := map[string]string{}
 	for _, seat := range spec.Seats {
 		if team := strings.TrimSpace(seat.Team); team != "" {
-			teams[seat.Profile.UserID] = team
+			teams[seat.UserID] = team
 		}
 	}
 	return teams
+}
+
+// UserIDs is who plays the match, in seat order.
+func (spec LaunchSpec) UserIDs() []string {
+	out := make([]string, len(spec.Seats))
+	for i, seat := range spec.Seats {
+		out[i] = seat.UserID
+	}
+	return out
 }

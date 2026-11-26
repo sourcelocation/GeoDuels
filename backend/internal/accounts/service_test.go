@@ -68,9 +68,6 @@ func (m *memoryStore) EnsureAccountRank(context.Context, string, string, string,
 	return nil
 }
 func (m *memoryStore) EnsureAccountStats(context.Context, string) error { return nil }
-func (m *memoryStore) EnsureAccountRankedStats(context.Context, string, string, string) error {
-	return nil
-}
 func (m *memoryStore) GetIdentity(_ context.Context, id string) (Identity, error) {
 	providers := make([]string, 0, len(m.providers))
 	for p := range m.providers {

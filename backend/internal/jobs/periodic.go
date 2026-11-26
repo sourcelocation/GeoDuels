@@ -36,5 +36,9 @@ func PeriodicJobs(cfg PeriodicConfig) []*river.PeriodicJob {
 			func() (river.JobArgs, *river.InsertOpts) { return SeasonResetArgs{}, unique }, opts("season_reset")),
 		river.NewPeriodicJob(river.PeriodicInterval(every(cfg.CurationInterval, time.Minute)),
 			func() (river.JobArgs, *river.InsertOpts) { return CurationSweepArgs{}, unique }, opts("curation_sweep")),
+		river.NewPeriodicJob(river.PeriodicInterval(every(cfg.LeaderboardInterval, time.Minute)),
+			func() (river.JobArgs, *river.InsertOpts) { return LeaderboardRefreshArgs{}, unique }, opts("leaderboard_refresh")),
+		river.NewPeriodicJob(river.PeriodicInterval(every(cfg.MapStatsInterval, 5*time.Minute)),
+			func() (river.JobArgs, *river.InsertOpts) { return MapStatsArgs{}, unique }, opts("map_stats")),
 	}
 }

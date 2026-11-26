@@ -334,7 +334,7 @@ func (s *PGStore) SetMapFavorite(userID, mapID string, favorite bool) (Map, erro
 		}
 		if rows > 0 {
 			changed = true
-			if err := incrementMapFavoriteStats(ctx, tx, strings.TrimSpace(mapID), strings.TrimSpace(userID)); err != nil {
+			if err := incrementMapFavoriteStats(ctx, tx, strings.TrimSpace(mapID)); err != nil {
 				return Map{}, err
 			}
 		}
@@ -346,9 +346,6 @@ func (s *PGStore) SetMapFavorite(userID, mapID string, favorite bool) (Map, erro
 		if rows > 0 {
 			changed = true
 			if err := q.DecrementFavoriteCount(ctx, mapUUID); err != nil {
-				return Map{}, err
-			}
-			if err := refreshMapTrendingScore(ctx, tx, strings.TrimSpace(mapID)); err != nil {
 				return Map{}, err
 			}
 		}

@@ -28,6 +28,10 @@ SELECT EXISTS(SELECT 1 FROM map_comments WHERE map_id=sqlc.arg(map_id)::uuid AND
 -- name: MapCommentLikeVisible :one
 SELECT EXISTS(SELECT 1 FROM map_comments c JOIN maps m ON m.id=c.map_id WHERE c.id=sqlc.arg(comment_id)::uuid AND c.map_id=sqlc.arg(map_id)::uuid AND c.status='visible' AND m.archived_at IS NULL AND (m.owner_user_id IS NULL OR m.official_at IS NOT NULL OR m.owner_user_id=NULLIF(sqlc.arg(viewer_user_id),'')::uuid OR m.visibility IN ('public','unlisted')));
 
+-- name: MapCommentModerator :one
+-- Whether a signed-in viewer may see and delete hidden comments.
+SELECT gd_is_admin(sqlc.arg(user_id)::uuid) OR gd_is_judge(sqlc.arg(user_id)::uuid) AS moderator;
+
 -- name: MapCommentParent :one
 SELECT parent_id FROM map_comments WHERE id=sqlc.arg(comment_id)::uuid AND map_id=sqlc.arg(map_id)::uuid AND status='visible';
 

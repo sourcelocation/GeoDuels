@@ -60,6 +60,8 @@ export class MatchController {
   private state: MatchState = initialState;
   private readonly sessionController: SessionController;
   private readonly sfxController?: SfxController;
+  // onMatchStarted goes to a match the matchmaker answered with, the way a match.started event does.
+  private readonly onMatchStarted: (matchId: string) => void;
   private readonly socketClient: GameplaySocketClient;
   private activeSession: AuthSessionSnapshot | null = null;
   private recoverAbort: AbortController | null = null;
@@ -75,9 +77,10 @@ export class MatchController {
   private destroyed = false;
   private started = false;
 
-  constructor(params: { sessionController: SessionController; sfxController?: SfxController }) {
+  constructor(params: { sessionController: SessionController; sfxController?: SfxController; onMatchStarted: (matchId: string) => void }) {
     this.sessionController = params.sessionController;
     this.sfxController = params.sfxController;
+    this.onMatchStarted = params.onMatchStarted;
     this.socketClient = new GameplaySocketClient({
       onOpen: () => {
         this.sendGameCommand('ping', { userId: this.activeSession?.userId || '' });
@@ -381,16 +384,19 @@ export class MatchController {
     return true;
   };
 
-  joinQueue = (queues: QueueVariant[] = ['moving']) => {
+  joinQueue = (queues: QueueVariant[] = []) => {
     this.stopConnection();
     this.soloAbort?.abort();
     this.patchState({ queueError: '', launchMatchId: '' });
     void (async () => {
       try {
+        if (!queues.length) throw new Error('Choose a mode to queue for');
         const session = await this.sessionController.getPlayableSession();
         if (!session) throw new Error('Unable to create session');
         this.dispatchMatchmaking({ type: 'join_requested', startedAt: Date.now() });
-        await enterQueue(session.accessToken, queues.length ? queues : ['moving']);
+        const reply = await enterQueue(session.accessToken, queues);
+        if (reply.match) this.onMatchStarted(reply.match.matchId);
+        else if (reply.queue) this.applyQueue(reply.queue);
       } catch (error) {
         this.patchState({ queueError: error instanceof Error ? error.message : 'Queue failed' });
         this.dispatchMatchmaking({ type: 'queue_error' });
@@ -482,8 +488,10 @@ export class MatchController {
   cancelQueue = () => {
     this.dispatchMatchmaking({ type: 'leave_requested' });
     this.patchState({ queueError: '' });
-    void this.sessionController.ensureFreshSession().then((session) => {
-      if (session) return leaveQueue(session.accessToken);
+    void this.sessionController.ensureFreshSession().then(async (session) => {
+      if (!session) return;
+      const reply = await leaveQueue(session.accessToken);
+      if (reply.queue) this.applyQueue(reply.queue);
     }).catch(() => undefined);
   };
 

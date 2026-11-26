@@ -22,11 +22,9 @@ type Store interface {
 	RecordIdentityHistory(ctx context.Context, userID, provider, providerUserID, email, providerName string) error
 	EnsureAccountRank(ctx context.Context, userID, mode, seasonID string, mmr int) error
 	EnsureAccountStats(ctx context.Context, userID string) error
-	EnsureAccountRankedStats(ctx context.Context, userID, mode, seasonID string) error
 	UpsertUser(ctx context.Context, userID, displayName string) error
 	EnsureUserRank(ctx context.Context, userID, mode, seasonID string, mmr int) error
 	EnsureUserStats(ctx context.Context, userID string) error
-	EnsureRankedStats(ctx context.Context, userID, mode, seasonID string) error
 	ProviderIdentityExists(ctx context.Context, provider, providerUserID string) (bool, error)
 	ProviderIdentityBanned(ctx context.Context, provider, providerUserID string) (bool, string, error)
 	CountUserProviders(ctx context.Context, userID string) (int, error)

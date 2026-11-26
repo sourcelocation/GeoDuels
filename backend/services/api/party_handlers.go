@@ -9,7 +9,6 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"geoduels/internal/matches"
 	"geoduels/internal/parties"
 	"geoduels/internal/presence"
 	"geoduels/pkg/gameplay"
@@ -307,10 +306,6 @@ func (a *api) leaveParty(c echo.Context, partyID, userID string) error {
 	return nil
 }
 
-func (a *api) startParty(c echo.Context, partyID, userID string) error {
-	return a.startPartyMatch(c.Request().Context(), partyID, userID)
-}
-
 // loadParty is a party with who is connected filled in.
 func (a *api) loadParty(ctx context.Context, partyID string) (parties.Party, bool, error) {
 	party, found, err := a.parties.GetPartyByID(partyID)
@@ -359,67 +354,6 @@ func partyMemberIDs(party parties.Party) []string {
 	return out
 }
 
-// startPartyMatch starts the party's match with every member seated, once they are all connected.
-func (a *api) startPartyMatch(ctx context.Context, partyID, userID string) error {
-	snap, ok, err := a.loadParty(ctx, partyID)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadGateway, "party unavailable")
-	}
-	if !ok {
-		return echo.NewHTTPError(http.StatusNotFound, "party not found")
-	}
-	if snap.OwnerUserID != userID {
-		return echo.NewHTTPError(http.StatusForbidden, "forbidden")
-	}
-	if snap.State != parties.StateOpen {
-		return echo.NewHTTPError(http.StatusConflict, "party is not open")
-	}
-	kind, ok := matchkind.ForParty(snap.Mode)
-	if !ok {
-		return echo.NewHTTPError(http.StatusConflict, "unsupported party mode")
-	}
-	if err := requirePartyPresence(snap); err != nil {
-		return echo.NewHTTPError(http.StatusConflict, err.Error())
-	}
-	spec := matchkind.Of(kind)
-	seats := make([]matchkind.Seat, 0, len(snap.Members))
-	for _, member := range snap.Members {
-		seat := matchkind.Seat{UserID: member.UserID}
-		if spec.Teams {
-			seat.Team = normalizePartyTeam(member.TeamID)
-		}
-		seats = append(seats, seat)
-	}
-	if err := spec.CheckSeats(seats); err != nil {
-		return echo.NewHTTPError(http.StatusConflict, err.Error())
-	}
-	if _, err := a.startMatch(ctx, startRequest{
-		Kind: kind, Seats: seats, Config: snap.Config, PartyID: snap.ID, MapAccessUserID: snap.OwnerUserID,
-		ReturnTarget: &matches.ReturnTarget{Kind: matches.ReturnParty, PartyID: snap.ID},
-	}); err != nil {
-		observability.Log("warn", "party match start failed", map[string]any{"partyId": snap.ID, "error": err.Error()})
-		return echo.NewHTTPError(http.StatusConflict, a.startErrorMessage(err))
-	}
-	return nil
-}
-
-func requirePartyPresence(snap parties.Party) error {
-	missing := make([]string, 0, len(snap.Members))
-	for _, member := range snap.Members {
-		if !member.Connected {
-			name := strings.TrimSpace(member.DisplayName)
-			if name == "" {
-				name = member.UserID
-			}
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) > 0 {
-		return errors.New("all players must be connected to start: " + strings.Join(missing, ", "))
-	}
-	return nil
-}
-
 func partyHasMember(snap parties.Party, userID string) bool {
 	for _, member := range snap.Members {
 		if member.UserID == userID {
@@ -427,13 +361,6 @@ func partyHasMember(snap parties.Party, userID string) bool {
 		}
 	}
 	return false
-}
-
-func normalizePartyTeam(teamID string) string {
-	if strings.ToLower(strings.TrimSpace(teamID)) == "b" {
-		return "b"
-	}
-	return "a"
 }
 
 type partySettingsRequest struct {

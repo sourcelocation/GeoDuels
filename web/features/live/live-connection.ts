@@ -49,7 +49,7 @@ export class LiveConnection {
   }
 
   private open() {
-    const socket = new WebSocket(apiSocketURL("/api/live"));
+    const socket = new WebSocket(apiSocketURL("/live"));
     this.socket = socket;
     socket.onopen = () => {
       this.attempt = 0;

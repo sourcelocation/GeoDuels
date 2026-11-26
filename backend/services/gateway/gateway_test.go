@@ -64,7 +64,7 @@ func newHarness(t *testing.T) *harness {
 	g := &gateway{id: "test", api: stubAPI(t), bus: bus, secret: "test", clients: newClientSet[*client](), matches: newClientSet[*matchSocket]()}
 	server := httptest.NewServer(g.routes())
 	t.Cleanup(server.Close)
-	return &harness{nats: nats, bus: bus, gateway: g, url: "ws" + strings.TrimPrefix(server.URL, "http") + "/api/live"}
+	return &harness{nats: nats, bus: bus, gateway: g, url: "ws" + strings.TrimPrefix(server.URL, "http") + "/live"}
 }
 
 // dial connects as the user and returns once the session has arrived, when the subscription exists.

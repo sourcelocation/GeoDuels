@@ -2,11 +2,13 @@ import { Check, Crosshair, Lock, MousePointer2, Move, X } from "lucide-react";
 import AppModalShell from "../../../components/ui/AppModalShell";
 import { Button, IconButton } from "../../../components/ui/button";
 import { Switch } from "../../../components/ui/Switch";
-import type {
-  GameRuleset,
-  QueueVariant,
-  StreetNamesVisibility,
+import {
+  needsExtension,
+  type GameRuleset,
+  type QueueVariant,
+  type StreetNamesVisibility,
 } from "../../matchmaking/lib/queue-client";
+import { useRankedQueues } from "../../matchmaking/hooks/use-ranked-queues";
 import type { ExtensionAvailabilityStatus } from "../../browser-extension/hooks/use-extension-availability";
 import { PlayModeActionButton } from "./PlayPanel";
 
@@ -60,6 +62,11 @@ const modes: Array<{
     extensionRequired: false,
   },
 ];
+
+/** The icon a ruleset is shown with. */
+function rulesetIcon(ruleset: GameRuleset | undefined) {
+  return modes.find((mode) => mode.value === ruleset)?.Icon ?? Move;
+}
 
 function ExtensionInstallCallout({
   status,
@@ -119,12 +126,13 @@ function StreetNamesToggle({
 }
 
 export function PlayLaunchModal(props: Props) {
+  const offered = useRankedQueues();
   const selectedModes = props.kind === "singleplayer" ? [props.mode] : [];
   const hasLockedSelection =
     !props.extensionAvailable &&
     (props.kind === "duel"
-      ? props.queues.includes("no_move_hidden")
-      : selectedModes.includes("no_move") || props.streetNames === "hidden");
+      ? offered.some((queue) => props.queues.includes(queue.id) && needsExtension(queue.config))
+      : needsExtension({ ruleset: props.mode, streetNames: props.streetNames }));
   const hideStartButton =
     hasLockedSelection && props.extensionStatus.state === "missing";
 
@@ -136,28 +144,13 @@ export function PlayLaunchModal(props: Props) {
     if (props.kind === "singleplayer") props.onStreetNamesChange(value);
   };
 
-  const rankedModes: Array<{
-    value: QueueVariant;
-    title: string;
-    detail: string;
-    Icon: typeof Move;
-    extensionRequired: boolean;
-  }> = [
-    {
-      value: "moving",
-      title: "Moving",
-      detail: "Street names",
-      Icon: Move,
-      extensionRequired: false,
-    },
-    {
-      value: "no_move_hidden",
-      title: "No Move",
-      detail: "No street names",
-      Icon: MousePointer2,
-      extensionRequired: true,
-    },
-  ];
+  const rankedModes = offered.map((queue) => ({
+    value: queue.id,
+    title: queue.title,
+    detail: queue.detail ?? "",
+    Icon: rulesetIcon(queue.config.ruleset),
+    extensionRequired: needsExtension(queue.config),
+  }));
 
   return (
     <AppModalShell

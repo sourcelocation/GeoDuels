@@ -45,29 +45,12 @@ SET replay_zstd = NULL, replay_json = NULL, replay_codec = NULL,
 FROM expired e
 WHERE h.match_id = e.match_id;
 
--- name: DeleteMapDailyUsers :execresult
-DELETE FROM map_daily_users
-WHERE ctid IN (
-    SELECT ctid FROM map_daily_users
-    WHERE day < current_date - 8
-    LIMIT $1
-);
-
 -- name: DeleteMapUploadEvents :execresult
 DELETE FROM map_upload_events
 WHERE id IN (
     SELECT id FROM map_upload_events
     WHERE created_at < now() - interval '24 hours'
     ORDER BY created_at
-    LIMIT $1
-);
-
--- name: DeleteMatchPlans :execresult
--- Plans are written with their match, so a plan without one belongs to a match already cleaned up.
-DELETE FROM match_round_plans
-WHERE ctid IN (
-    SELECT p.ctid FROM match_round_plans p
-    WHERE NOT EXISTS (SELECT 1 FROM match_sessions s WHERE s.match_id = p.match_id)
     LIMIT $1
 );
 
@@ -142,5 +125,5 @@ WHERE key IN (
 -- Parties past their lifetime close, unless their match is still going.
 UPDATE parties SET state = 'expired', updated_at = now()
 WHERE state = 'open' AND expires_at < now()
-  AND NOT EXISTS (SELECT 1 FROM match_sessions ms WHERE ms.match_id = parties.last_match_id AND ms.ended_at IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM match_sessions ms WHERE ms.source_party_id = parties.id AND ms.ended_at IS NULL)
 RETURNING id;

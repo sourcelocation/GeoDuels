@@ -76,10 +76,13 @@ type PGStore struct {
 	pool *pgxpool.Pool
 	tx   pgx.Tx
 	jobs jobs.Enqueuer
+	// settings is the process's copy of the site settings, for the season reviews are read in. Refunds
+	// and integrity checks read the season in their own transaction.
+	settings storekit.Settings
 }
 
-func NewPGStore(pool *pgxpool.Pool, enqueuer jobs.Enqueuer) *PGStore {
-	return &PGStore{pool: pool, jobs: enqueuer}
+func NewPGStore(pool *pgxpool.Pool, enqueuer jobs.Enqueuer, settings storekit.Settings) *PGStore {
+	return &PGStore{pool: pool, jobs: enqueuer, settings: settings}
 }
 
 // q selects the transaction when present and the pool otherwise.

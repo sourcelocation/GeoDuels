@@ -27,10 +27,7 @@ func (a *PGStore) SearchSubjects(ctx context.Context, viewer pkgstaff.Actor, que
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	seasonID, err := storekit.ActiveSeasonID(ctx, a.pool)
-	if err != nil {
-		return nil, err
-	}
+	seasonID := storekit.CurrentSeasonID(a.settings)
 	rows, err := a.q().SearchAdminPlayers(ctx, db.SearchAdminPlayersParams{
 		Mode:             db.GdMatchMode(modeDuel),
 		SeasonID:         seasonID,
@@ -75,10 +72,7 @@ func (a *PGStore) getSubjectSummary(ctx context.Context, includeSensitive bool, 
 	if err != nil {
 		return PlayerSummary{}, ErrNotFound
 	}
-	seasonID, err := storekit.ActiveSeasonID(ctx, a.pool)
-	if err != nil {
-		return PlayerSummary{}, err
-	}
+	seasonID := storekit.CurrentSeasonID(a.settings)
 	rows, err := a.q().SearchAdminPlayers(ctx, db.SearchAdminPlayersParams{
 		Mode:             db.GdMatchMode(modeDuel),
 		SeasonID:         seasonID,

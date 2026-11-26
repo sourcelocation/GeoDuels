@@ -19,15 +19,18 @@ const createNextConfig = (phase) => ({
   // page that falls out is built again on its next request.
   cacheMaxMemorySize: 32 * 1024 * 1024,
   experimental: { isrFlushToDisk: false },
-  // Development's front door is this server: sockets go on to the gateway and the rest of /api to the
-  // API, as the ingress and compose's front door route them.
+  // Development's front door is this server: sockets go on to the gateway, /matchmaking to the
+  // matchmaker and /api to the API, as the ingress and compose's front door route them.
   ...(phase === PHASE_DEVELOPMENT_SERVER && {
     async rewrites() {
       const api = (process.env.API_URL ??= "http://localhost:24001");
       const gateway = process.env.GATEWAY_URL ?? "http://localhost:24002";
+      const matchmaker = process.env.MATCHMAKER_URL ?? "http://localhost:24008";
       return {
         beforeFiles: [
-          { source: "/api/live/:path*", destination: `${gateway}/api/live/:path*` },
+          { source: "/live", destination: `${gateway}/live` },
+          { source: "/live/:path*", destination: `${gateway}/live/:path*` },
+          { source: "/matchmaking/:path*", destination: `${matchmaker}/matchmaking/:path*` },
           { source: "/api/:path*", destination: `${api}/api/:path*` },
         ],
       };

@@ -10,9 +10,6 @@ delete from user_identities where user_id=$1 and provider=$2;
 -- name: EnsureAccountRank :exec
 insert into ranks(user_id,mode,mmr,season_id) values($1,$2,$4,$3) on conflict(user_id,mode,season_id) do nothing;
 
--- name: EnsureAccountRankedStats :exec
-insert into ranked_stats(user_id,mode,season_id,games_played,wins) values($1,$2,$3,0,0) on conflict(user_id,mode,season_id) do nothing;
-
 -- name: EnsureAccountStats :exec
 insert into user_stats(user_id,games_played,wins) values($1,0,0) on conflict(user_id) do nothing;
 

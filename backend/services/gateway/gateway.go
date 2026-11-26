@@ -72,8 +72,8 @@ func (g *gateway) routes() http.Handler {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("GET /api/live", g.serveLive)
-	mux.HandleFunc("GET /api/live/matches/{id}", g.serveMatch)
+	mux.HandleFunc("GET /live", g.serveLive)
+	mux.HandleFunc("GET /live/matches/{id}", g.serveMatch)
 	return mux
 }
 

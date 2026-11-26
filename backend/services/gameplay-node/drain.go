@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"log"
 	"sync"
 	"time"
 
@@ -54,14 +52,8 @@ func (d *gameplayDrain) isStopping() bool {
 	return d.stopping
 }
 
+// refreshMaintenanceDrain drains the node while maintenance blocks play, as the process's copy of the
+// settings has it.
 func (g *gameplayNode) refreshMaintenanceDrain() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	status, err := g.readMaintenance(ctx)
-	if err != nil {
-		// Keep the last known drain state if the database is briefly unavailable.
-		log.Printf("node maintenance read failed: %v", err)
-		return
-	}
-	g.drain.setMaintenance(status, time.Now())
+	g.drain.setMaintenance(maintenance.Current(g.settings), time.Now())
 }

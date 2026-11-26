@@ -125,11 +125,33 @@ func ActiveSeasonID(ctx context.Context, source any) (string, error) {
 		}
 		return "", err
 	}
+	return seasonIDFrom(raw), nil
+}
+
+// Settings is a process's copy of the site settings (sitesettings.Copy).
+type Settings interface {
+	Value(key string) ([]byte, bool)
+}
+
+// rankedSeasonKey is the site setting that holds the ranked season.
+const rankedSeasonKey = "ranked_season"
+
+// CurrentSeasonID is the active ranked season in the process's copy of the settings, up to a minute
+// behind. Reads use it; a write that depends on the season reads ActiveSeasonID in its transaction.
+func CurrentSeasonID(settings Settings) string {
+	raw, ok := settings.Value(rankedSeasonKey)
+	if !ok {
+		return DefaultSeasonID
+	}
+	return seasonIDFrom(raw)
+}
+
+func seasonIDFrom(raw []byte) string {
 	var settings struct {
 		ActiveSeasonID string `json:"activeSeasonId"`
 	}
 	if json.Unmarshal(raw, &settings) != nil || strings.TrimSpace(settings.ActiveSeasonID) == "" {
-		return DefaultSeasonID, nil
+		return DefaultSeasonID
 	}
-	return settings.ActiveSeasonID, nil
+	return settings.ActiveSeasonID
 }
