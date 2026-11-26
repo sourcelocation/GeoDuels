@@ -7,7 +7,6 @@ import (
 	"context"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -154,9 +153,16 @@ type Client struct {
 }
 
 // NewClient builds a River client. Pass nil workers for an insert-only client;
-// a worker client works queue (river.QueueDefault or QueueDiscord) and may
-// schedule periodic maintenance jobs.
-func NewClient(pool *pgxpool.Pool, queue string, workers *river.Workers, periodic []*river.PeriodicJob) (*Client, error) {
+// a worker client works queue and carries the periodic maintenance schedule.
+func NewClient(pool *pgxpool.Pool, queue string, workers *river.Workers) (*Client, error) {
+	rc, err := river.NewClient(riverpgxv5.New(pool), clientConfig(queue, workers))
+	if err != nil {
+		return nil, err
+	}
+	return &Client{river: rc, pool: pool}, nil
+}
+
+func clientConfig(queue string, workers *river.Workers) *river.Config {
 	cfg := &river.Config{
 		// Behind PgBouncer in transaction mode LISTEN never hears anything, and River would hold a
 		// connection for it forever; poll instead.
@@ -167,15 +173,9 @@ func NewClient(pool *pgxpool.Pool, queue string, workers *river.Workers, periodi
 	if workers != nil {
 		cfg.Workers = workers
 		cfg.Queues = map[string]river.QueueConfig{queue: {MaxWorkers: 8}}
+		cfg.PeriodicJobs = periodicJobs()
 	}
-	if len(periodic) > 0 {
-		cfg.PeriodicJobs = periodic
-	}
-	rc, err := river.NewClient(riverpgxv5.New(pool), cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &Client{river: rc, pool: pool}, nil
+	return cfg
 }
 
 // Start begins processing jobs (worker clients only).
@@ -233,14 +233,4 @@ func (c *Client) EnqueueDiscordSyncForUser(ctx context.Context, tx pgx.Tx, userI
 func (c *Client) EnqueueDiscordSyncAll(ctx context.Context, tx pgx.Tx) error {
 	_, err := c.river.InsertTx(ctx, tx, DiscordSyncAllArgs{}, &river.InsertOpts{UniqueOpts: river.UniqueOpts{ByArgs: true}})
 	return err
-}
-
-// PeriodicConfig carries the tunable maintenance intervals.
-type PeriodicConfig struct {
-	GuestCleanupInterval   time.Duration
-	StorageCleanupInterval time.Duration
-	SeasonResetInterval    time.Duration
-	CurationInterval       time.Duration
-	LeaderboardInterval    time.Duration
-	MapStatsInterval       time.Duration
 }

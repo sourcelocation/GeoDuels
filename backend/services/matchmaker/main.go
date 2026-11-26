@@ -119,7 +119,7 @@ func newMatchmaker() (*matchmaker, error) {
 		return nil, err
 	}
 	// Insert-only: the API works the live queue that tells parties and friends.
-	jobsClient, err := jobs.NewClient(pool, "", nil, nil)
+	jobsClient, err := jobs.NewClient(pool, "", nil)
 	if err != nil {
 		store.Close()
 		return nil, err

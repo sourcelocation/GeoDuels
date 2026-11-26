@@ -22,7 +22,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer store.Close()
-	producer, err := jobs.NewClient(store.Pool(), "", nil, nil)
+	producer, err := jobs.NewClient(store.Pool(), "", nil)
 	if err != nil {
 		log.Fatal(err)
 	}

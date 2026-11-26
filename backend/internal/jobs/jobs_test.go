@@ -39,7 +39,7 @@ func TestAClientWithWorkersInsertsOtherQueuesJobs(t *testing.T) {
 	defer pool.Close()
 	workers := river.NewWorkers()
 	river.AddWorker(workers, river.WorkFunc(func(context.Context, *river.Job[InboxChangedArgs]) error { return nil }))
-	client, err := NewClient(pool, QueueLive, workers, nil)
+	client, err := NewClient(pool, QueueLive, workers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,5 +48,22 @@ func TestAClientWithWorkersInsertsOtherQueuesJobs(t *testing.T) {
 	})
 	if !reached {
 		t.Fatalf("inserting another queue's job: %v", err)
+	}
+}
+
+// River enqueues periodic jobs only on its elected leader, which can be any process with workers. The API,
+// which works only the live queue, won the election after a rollout and the leaderboard stopped refreshing.
+func TestEveryWorkerClientCarriesTheMaintenanceSchedule(t *testing.T) {
+	schedule := len(periodicJobs())
+	if schedule == 0 {
+		t.Fatal("the maintenance schedule is empty")
+	}
+	for _, queue := range []string{QueueLive, QueueDiscord, river.QueueDefault} {
+		if got := len(clientConfig(queue, river.NewWorkers()).PeriodicJobs); got != schedule {
+			t.Errorf("a client working %q schedules %d of the %d maintenance jobs", queue, got, schedule)
+		}
+	}
+	if got := len(clientConfig("", nil).PeriodicJobs); got != 0 {
+		t.Errorf("an insert-only client schedules %d periodic jobs", got)
 	}
 }

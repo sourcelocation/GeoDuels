@@ -85,7 +85,7 @@ func newWorker() (*worker, error) {
 	pool := store.Pool()
 
 	// Insert-only client for producers inside this process.
-	producer, err := jobs.NewClient(pool, "", nil, nil)
+	producer, err := jobs.NewClient(pool, "", nil)
 	if err != nil {
 		store.Close()
 		return nil, err
@@ -124,15 +124,7 @@ func newWorker() (*worker, error) {
 	river.AddWorker(workers, &leaderboardRefreshWorker{leaderboard: leaderboardService})
 	river.AddWorker(workers, &mapStatsWorker{pool: pool})
 
-	periodic := jobs.PeriodicJobs(jobs.PeriodicConfig{
-		GuestCleanupInterval:   getenvDuration("GUEST_ACCOUNT_CLEANUP_INTERVAL", time.Hour),
-		StorageCleanupInterval: getenvDuration("STORAGE_CLEANUP_INTERVAL", time.Hour),
-		SeasonResetInterval:    time.Minute,
-		CurationInterval:       time.Minute,
-		LeaderboardInterval:    time.Minute,
-		MapStatsInterval:       getenvDuration("MAP_STATS_INTERVAL", 5*time.Minute),
-	})
-	jobsClient, err := jobs.NewClient(pool, river.QueueDefault, workers, periodic)
+	jobsClient, err := jobs.NewClient(pool, river.QueueDefault, workers)
 	if err != nil {
 		store.Close()
 		return nil, err
