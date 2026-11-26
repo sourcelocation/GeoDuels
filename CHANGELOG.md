@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.1](https://github.com/sourcelocation/GeoDuels/compare/v2.4.0...v2.4.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* every worker client schedules the maintenance jobs ([#54](https://github.com/sourcelocation/GeoDuels/issues/54)) ([70bf241](https://github.com/sourcelocation/GeoDuels/commit/70bf2418b99f069e0be768a8ec2827467c6a36bb))
+
 ## [2.4.0](https://github.com/sourcelocation/GeoDuels/compare/v2.3.0...v2.4.0) (2026-11-26)
 
 
