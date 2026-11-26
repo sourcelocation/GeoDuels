@@ -53,10 +53,6 @@ func getenvInt(k string, fallback int) int {
 	return envcfg.Int(k, fallback)
 }
 
-func getenvBool(k string, fallback bool) bool {
-	return envcfg.Bool(k, fallback)
-}
-
 func getenvSameSite(k string, fallback http.SameSite) http.SameSite {
 	return envcfg.SameSite(k, fallback)
 }

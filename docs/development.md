@@ -126,8 +126,8 @@ the browser's: it reads `/api/bootstrap`, fetches what the player needs and open
   a list of them would otherwise build every page it shows.
 
 `SITE_URL` and `API_URL` are read by the web server only. The browser calls `/api` on its own origin
-and gets its public keys from `/api/bootstrap` (the API's `GOOGLE_CLIENT_ID`, `DISCORD_CLIENT_ID`,
-`TURNSTILE_SITE_KEY`, `GOOGLE_EMBED_KEY`).
+and gets what it needs of the API's configuration from `/api/bootstrap`: the sign-in providers configured
+and `GOOGLE_EMBED_KEY`. `TURNSTILE_SITE_KEY` reaches it only with a guest sign-up past its address's limit.
 
 ## Local infrastructure
 

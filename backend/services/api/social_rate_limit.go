@@ -44,7 +44,7 @@ func (a *api) allowSocialAction(r *http.Request, userID, policyName string) (boo
 	if err != nil || !allowed {
 		return allowed, retryAfter, err
 	}
-	return ratelimit.Hit(ctx, a.db.Pool(), prefix+":ip:"+ip, policy.IPLimit, policy.Window)
+	return ratelimit.Hit(ctx, a.db.Pool(), prefix+":ip:"+rateLimitSubject(ip), policy.IPLimit, policy.Window)
 }
 
 func writeSocialRateLimited(c echo.Context, retryAfter time.Duration) error {

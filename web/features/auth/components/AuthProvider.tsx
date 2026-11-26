@@ -205,9 +205,9 @@ function AuthGlobalUi({ children }: { children: ReactNode }) {
   const [authError, setAuthError] = useState("");
   const oauthCallbackHandledRef = useRef(false);
   // Set once the bootstrap has returned, which also re-renders this.
-  const { googleClientId, discordClientId } = authGateway.getClientKeys();
-  const googleEnabled = !!googleClientId;
-  const discordEnabled = !!discordClientId;
+  const { authProviders } = authGateway.getClientKeys();
+  const googleEnabled = authProviders.includes("google");
+  const discordEnabled = authProviders.includes("discord");
 
   useEffect(() => {
     if (typeof window === "undefined" || oauthCallbackHandledRef.current) return;

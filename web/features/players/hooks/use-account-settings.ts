@@ -82,10 +82,8 @@ export function useAccountSettings(profilePath: string) {
       fail("Failed to start sign-in method")(providerError);
     }
   };
-  const { googleClientId, discordClientId } = authGateway.getClientKeys();
-  const providers = (["google", "discord"] as Provider[]).filter((provider) =>
-    provider === "google" ? googleClientId : discordClientId,
-  );
+  const { authProviders } = authGateway.getClientKeys();
+  const providers = (["google", "discord"] as Provider[]).filter((provider) => authProviders.includes(provider));
 
   return {
     accountQuery,

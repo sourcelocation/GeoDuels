@@ -6,16 +6,18 @@ import {
   requestBootstrap,
   type AppBootstrapPayload,
   type AuthSessionPayload,
+  type GuestVerification,
 } from "./lib/auth-client";
 import { decodeAccessTokenExpiry } from "./lib/token-expiry";
 import type { AuthSessionSnapshot } from "./session";
 import { dismissAllModals, hasMountedModals } from "../../components/ui/modal-dismissal";
 
-export type GuestVerification = () => Promise<string>;
 type AuthBroadcast = { source: string; type: "changed" | "logout" };
 const AUTH_LOCK = "geoduels-auth-cookie";
 const AUTH_CHANNEL = "geoduels-auth";
-const NO_CLIENT_KEYS: AppBootstrapPayload["client"] = { googleClientId: "", discordClientId: "", turnstileSiteKey: "", googleEmbedKey: "" };
+const NO_CLIENT_KEYS: AppBootstrapPayload["client"] = { authProviders: [], googleEmbedKey: "" };
+const NO_GUEST_VERIFICATION: GuestVerification = () =>
+  Promise.reject(new Error("Guest play needs a quick check. Start from the home page."));
 
 /** The sole browser owner allowed to commit authentication state. */
 export class AuthGateway {
@@ -27,7 +29,7 @@ export class AuthGateway {
   private restorePromise: Promise<AuthSessionSnapshot | null> | null = null;
   private restoreGeneration = -1;
   private refreshPromise: Promise<AuthSessionSnapshot | null> | null = null;
-  private guestVerification: GuestVerification | null = null;
+  private guestVerification = NO_GUEST_VERIFICATION;
   private channel: BroadcastChannel | null = null;
   private readonly source = Math.random().toString(36).slice(2);
   private readonly listeners = new Set<(snapshot: AuthSessionSnapshot | null) => void>();
@@ -45,7 +47,7 @@ export class AuthGateway {
   }
 
   setGuestVerification(callback: GuestVerification | null) {
-    this.guestVerification = callback;
+    this.guestVerification = callback ?? NO_GUEST_VERIFICATION;
   }
 
   subscribe(listener: (snapshot: AuthSessionSnapshot | null) => void) {
@@ -226,8 +228,7 @@ export class AuthGateway {
     const guest = await this.withCookieLock(async () => {
       if (operationGeneration !== this.generation) return null;
       const generation = ++this.generation;
-      const token = this.guestVerification ? await this.guestVerification() : "";
-      const payload = await requestGuestSession(token);
+      const payload = await requestGuestSession(this.guestVerification);
       if (generation === this.generation) {
         const snapshot = this.commit(payload);
         this.announce("changed");

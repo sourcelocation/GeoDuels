@@ -64,7 +64,6 @@ type api struct {
 	jobs                   *jobs.Client
 	httpClient             *http.Client
 	googleVerifier         *auth.GoogleVerifier
-	turnstileSiteKey       string
 	googleEmbedKey         string
 	googleClientID         string
 	googleSecret           string
@@ -86,12 +85,7 @@ type api struct {
 	refreshCookieSameSite  http.SameSite
 	guestSignupIPLimit     int
 	guestSignupIPWindow    time.Duration
-	guestSignupDailyLimit  int
-	guestSignupDailyWindow time.Duration
-	turnstileSecret        string
-	turnstileVerifyURL     string
-	turnstileHostname      string
-	guestTurnstileRequired bool
+	guestChallenge         guestChallenge
 	trustedProxyCIDRs      []*net.IPNet
 	adminBootstrapEmails   map[string]struct{}
 	metrics                *observability.APIMetrics
@@ -142,11 +136,16 @@ func newAPI() (*api, error) {
 		store.Close()
 		return nil, err
 	}
-	guestTurnstileRequired := getenvBool("TURNSTILE_GUEST_REQUIRED", false)
-	turnstileSecret := strings.TrimSpace(os.Getenv("TURNSTILE_SECRET_KEY"))
-	if guestTurnstileRequired && turnstileSecret == "" {
+	httpClient := &http.Client{Timeout: 3 * time.Second}
+	guestChallenge, err := guestChallengeFromEnv(httpClient)
+	if err != nil {
 		store.Close()
-		return nil, errors.New("TURNSTILE_SECRET_KEY is required when TURNSTILE_GUEST_REQUIRED=true")
+		return nil, err
+	}
+	guestSignupIPWindow := getenvDuration("GUEST_SIGNUP_IP_WINDOW", 6*time.Hour)
+	if guestSignupIPWindow <= 0 {
+		store.Close()
+		return nil, errors.New("GUEST_SIGNUP_IP_WINDOW must be positive")
 	}
 	pool := store.Pool()
 	loadCtx, cancelLoad := context.WithTimeout(context.Background(), 10*time.Second)
@@ -199,10 +198,9 @@ func newAPI() (*api, error) {
 		chat:                   chat.NewPGStore(pool),
 		bus:                    bus,
 		jobs:                   jobsClient,
-		httpClient:             &http.Client{Timeout: 3 * time.Second},
+		httpClient:             httpClient,
 		googleVerifier:         googleVerifier,
 		googleClientID:         googleClientID,
-		turnstileSiteKey:       strings.TrimSpace(os.Getenv("TURNSTILE_SITE_KEY")),
 		googleEmbedKey:         strings.TrimSpace(os.Getenv("GOOGLE_EMBED_KEY")),
 		googleSecret:           googleSecret,
 		discordClientID:        discordClientID,
@@ -221,14 +219,9 @@ func newAPI() (*api, error) {
 		refreshCookieName:      getenv("APP_REFRESH_COOKIE_NAME", "geoduels_refresh"),
 		refreshCookieDomain:    strings.TrimSpace(os.Getenv("APP_REFRESH_COOKIE_DOMAIN")),
 		refreshCookieSameSite:  getenvSameSite("APP_REFRESH_COOKIE_SAMESITE", http.SameSiteLaxMode),
-		guestSignupIPLimit:     getenvInt("GUEST_SIGNUP_IP_LIMIT", 5),
-		guestSignupIPWindow:    getenvDuration("GUEST_SIGNUP_IP_WINDOW", 10*time.Minute),
-		guestSignupDailyLimit:  getenvInt("GUEST_SIGNUP_IP_DAILY_LIMIT", 10),
-		guestSignupDailyWindow: getenvDuration("GUEST_SIGNUP_IP_DAILY_WINDOW", 24*time.Hour),
-		turnstileSecret:        turnstileSecret,
-		turnstileVerifyURL:     getenv("TURNSTILE_VERIFY_URL", turnstileSiteverifyURL),
-		turnstileHostname:      strings.TrimSpace(os.Getenv("TURNSTILE_EXPECTED_HOSTNAME")),
-		guestTurnstileRequired: guestTurnstileRequired,
+		guestSignupIPLimit:     getenvInt("GUEST_SIGNUP_IP_LIMIT", 3),
+		guestSignupIPWindow:    guestSignupIPWindow,
+		guestChallenge:         guestChallenge,
 		trustedProxyCIDRs:      trustedProxyCIDRs,
 		adminBootstrapEmails:   parseEmailAllowlist(os.Getenv("ADMIN_BOOTSTRAP_EMAILS")),
 		metrics:                observability.NewAPIMetrics(),
