@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.0](https://github.com/sourcelocation/GeoDuels/compare/v2.3.0...v2.4.0) (2026-11-26)
+
+
+### Features
+
+* a matchmaker service creates every match ([#51](https://github.com/sourcelocation/GeoDuels/issues/51)) ([9031fad](https://github.com/sourcelocation/GeoDuels/commit/9031fad88bdf5d0f8e4d890c33737ecadcd17f65))
+* ask for Turnstile only past the guest signup limit ([#50](https://github.com/sourcelocation/GeoDuels/issues/50)) ([7e32b67](https://github.com/sourcelocation/GeoDuels/commit/7e32b6785c187c3e75c09c360b3412ebc160d729))
+
 ## [2.3.0](https://github.com/sourcelocation/geoduels/compare/v2.2.8...v2.3.0) (2026-11-07)
 
 
